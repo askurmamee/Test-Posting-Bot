@@ -8,6 +8,7 @@ Discord bot for keeping code channels clean and sending code or referral submiss
 - Lets moderators choose one records-only channel for codes and one for referrals
 - Deletes normal chat from protected channels
 - Lets members submit a code or referral from any channel with one command
+- Lets admins restart the bot or run a configured update command from Discord
 - Stores channel settings locally in `data/channels.json`
 
 ## Commands
@@ -22,6 +23,8 @@ Discord bot for keeping code channels clean and sending code or referral submiss
 - `!codechannels`
 - `!code Name | CODE | optional-link`
 - `!referral Name | https://link | optional short description`
+- `!restartbot`
+- `!updatebot`
 
 Legacy aliases still work:
 
@@ -38,8 +41,12 @@ All `!code`, `!casino`, `!freesc`, and `!referral` submissions can be run in any
    - `npm install`
 2. Copy `.env.example` to `.env`
 3. Add your Discord bot token to `DISCORD_TOKEN`
-4. Start the bot:
+4. Optional: set `UPDATE_COMMAND` if you want `!updatebot` to run a server-side update command
+5. Optional: set `RESTART_AFTER_UPDATE=true` if the bot should restart after a successful update
+6. Start the bot:
    - `npm start`
+
+For `!restartbot` to bring the bot back up automatically, run the bot with a process manager such as PM2, Docker restart policies, or systemd.
 
 ## Discord bot permissions
 
@@ -51,3 +58,5 @@ The bot should have permission to:
 - View channels
 
 Moderators need the **Manage Channels** permission to configure which channels are code-only.
+
+The `!restartbot` and `!updatebot` commands require the **Administrator** permission.

@@ -21,9 +21,11 @@ const {
   setRecordsChannel,
   upsertChannel,
 } = require("./store");
+const { formatCommandOutput, runUpdateCommand } = require("./control");
 
 const token = process.env.DISCORD_TOKEN;
 const prefix = process.env.BOT_PREFIX?.trim() || "!";
+const shouldRestartAfterUpdate = process.env.RESTART_AFTER_UPDATE === "true";
 
 if (!token) {
   throw new Error("Missing DISCORD_TOKEN in environment.");
@@ -73,15 +75,48 @@ function listConfiguredChannels(guild) {
   return configured;
 }
 
+function getTargetChannel(message) {
+  return message.mentions.channels.first() ?? message.channel;
+}
+
+function canManageChannels(member) {
+  return member.permissions.has(PermissionFlagsBits.ManageChannels);
+}
+
+function canControlBot(member) {
+  return member.permissions.has(PermissionFlagsBits.Administrator);
+}
+
+async function sendTemporaryNotice(channel, text) {
+  await channel
+    .send(text)
+    .then((sent) => {
+      setTimeout(() => {
+        sent.delete().catch(() => null);
+      }, 5000);
+    })
+    .catch(() => null);
+}
+
 async function sendUsage(message) {
   await message.reply(
     [
-      `Use \`${prefix}setcodechannel <casino|freesc> [#channel]\` to mark a code-only channel.`,
-      `Use \`${prefix}setcoderecordschannel [#channel]\` to choose the code records channel.`,
-      `Use \`${prefix}setreferralrecordschannel [#channel]\` to choose the referral records channel.`,
-      `Use \`${prefix}code Name | CODE | optional-link\` from any channel.`,
-      `Use \`${prefix}referral Name | https://link | optional short description\` from any channel.`,
-      `Use \`${prefix}codechannels\` to list the protected and records channels.`,
+      "**Member commands**",
+      `- \`${prefix}code Name | CODE | optional-link\``,
+      `- \`${prefix}referral Name | https://link | optional short description\``,
+      "",
+      "**Channel setup commands**",
+      `- \`${prefix}setcodechannel <casino|freesc> [#channel]\``,
+      `- \`${prefix}unsetcodechannel [#channel]\``,
+      `- \`${prefix}setcoderecordschannel [#channel]\``,
+      `- \`${prefix}unsetcoderecordschannel\``,
+      `- \`${prefix}setreferralrecordschannel [#channel]\``,
+      `- \`${prefix}unsetreferralrecordschannel\``,
+      `- \`${prefix}codechannels\``,
+      "",
+      "**Admin bot commands**",
+      `- \`${prefix}restartbot\``,
+      `- \`${prefix}updatebot\``,
     ].join("\n"),
   );
 }
@@ -166,6 +201,38 @@ async function postReferral(message, rawDetails) {
   }
 }
 
+async function restartBot(message) {
+  await message.reply("Restarting the bot now.");
+
+  setTimeout(() => {
+    client.destroy();
+    process.exit(0);
+  }, 1000);
+}
+
+async function updateBot(message) {
+  const updateCommand = process.env.UPDATE_COMMAND?.trim();
+
+  if (!updateCommand) {
+    await message.reply("Set UPDATE_COMMAND in the bot environment before using this command.");
+    return;
+  }
+
+  await message.reply("Running the bot update command now.");
+
+  try {
+    const { stdout, stderr } = await runUpdateCommand(updateCommand);
+    await message.reply(`Update finished.\n\`\`\`\n${formatCommandOutput(stdout, stderr)}\n\`\`\``);
+
+    if (shouldRestartAfterUpdate) {
+      await restartBot(message);
+    }
+  } catch (result) {
+    const output = formatCommandOutput(result.stdout, result.stderr || result.error?.message);
+    await message.reply(`Update failed.\n\`\`\`\n${output}\n\`\`\``);
+  }
+}
+
 async function handleCommand(message) {
   const withoutPrefix = message.content.slice(prefix.length).trim();
 
@@ -218,7 +285,7 @@ async function handleCommand(message) {
     await message.reply(
       configured.length > 0
         ? configured.join("\n")
-        : "No code-only channels are configured yet.",
+        : "No code or records channels are configured yet.",
     );
     return;
   }
@@ -231,11 +298,7 @@ async function handleCommand(message) {
     command === "setreferralrecordschannel" ||
     command === "unsetreferralrecordschannel"
   ) {
-    const hasPermission = message.member.permissions.has(
-      PermissionFlagsBits.ManageChannels,
-    );
-
-    if (!hasPermission) {
+    if (!canManageChannels(message.member)) {
       await message.reply("You need the Manage Channels permission to change channel rules.");
       return;
     }
@@ -243,7 +306,7 @@ async function handleCommand(message) {
 
   if (command === "setcodechannel") {
     const requestedType = normalizeChannelType(args[0]);
-    const targetChannel = message.mentions.channels.first() ?? message.channel;
+    const targetChannel = getTargetChannel(message);
 
     if (!requestedType) {
       await message.reply(
@@ -260,7 +323,7 @@ async function handleCommand(message) {
   }
 
   if (command === "unsetcodechannel") {
-    const targetChannel = message.mentions.channels.first() ?? message.channel;
+    const targetChannel = getTargetChannel(message);
     const removed = removeChannel(message.guild.id, targetChannel.id);
 
     await message.reply(
@@ -272,7 +335,7 @@ async function handleCommand(message) {
   }
 
   if (command === "setcoderecordschannel") {
-    const targetChannel = message.mentions.channels.first() ?? message.channel;
+    const targetChannel = getTargetChannel(message);
     setRecordsChannel(message.guild.id, "code", targetChannel.id);
     await message.reply(`${targetChannel} is now the code records channel.`);
     return;
@@ -289,7 +352,7 @@ async function handleCommand(message) {
   }
 
   if (command === "setreferralrecordschannel") {
-    const targetChannel = message.mentions.channels.first() ?? message.channel;
+    const targetChannel = getTargetChannel(message);
     setRecordsChannel(message.guild.id, "referral", targetChannel.id);
     await message.reply(`${targetChannel} is now the referral records channel.`);
     return;
@@ -302,6 +365,26 @@ async function handleCommand(message) {
         ? "The referral records channel has been cleared."
         : "There is no referral records channel configured right now.",
     );
+    return;
+  }
+
+  if (command === "restartbot" || command === "restart") {
+    if (!canControlBot(message.member)) {
+      await message.reply("You need the Administrator permission to restart the bot.");
+      return;
+    }
+
+    await restartBot(message);
+    return;
+  }
+
+  if (command === "updatebot" || command === "update") {
+    if (!canControlBot(message.member)) {
+      await message.reply("You need the Administrator permission to update the bot.");
+      return;
+    }
+
+    await updateBot(message);
     return;
   }
 
@@ -322,16 +405,10 @@ async function moderateCodeOnlyChannel(message) {
     referralRecordsChannel?.id === message.channel.id
   ) {
     await message.delete().catch(() => null);
-
-    const notice = `${message.author}, this channel is records-only. Use bot commands from any channel to add freebies here.`;
-    await message.channel
-      .send(notice)
-      .then((sent) => {
-        setTimeout(() => {
-          sent.delete().catch(() => null);
-        }, 5000);
-      })
-      .catch(() => null);
+    await sendTemporaryNotice(
+      message.channel,
+      `${message.author}, this channel is records-only. Use bot commands from any channel to add freebies here.`,
+    );
     return;
   }
 
@@ -344,13 +421,10 @@ async function moderateCodeOnlyChannel(message) {
   }
 
   await message.delete().catch(() => null);
-
-  const notice = `${message.author}, this channel is code-only. Use a single code or the bot commands.`;
-  await message.channel.send(notice).then((sent) => {
-    setTimeout(() => {
-      sent.delete().catch(() => null);
-    }, 5000);
-  }).catch(() => null);
+  await sendTemporaryNotice(
+    message.channel,
+    `${message.author}, this channel is code-only. Use a single code or the bot commands.`,
+  );
 }
 
 client.once("ready", () => {
