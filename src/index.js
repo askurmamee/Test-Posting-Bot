@@ -8,9 +8,7 @@ const {
 } = require("discord.js");
 
 const {
-  getChannelLabel,
   isValidCode,
-  normalizeChannelType,
   parseCodeSubmission,
   parseReferralSubmission,
 } = require("./codeRules");
@@ -25,6 +23,12 @@ const { formatCommandOutput, runUpdateCommand } = require("./control");
 
 const token = process.env.DISCORD_TOKEN;
 const prefix = process.env.BOT_PREFIX?.trim() || "!";
+const adminRoleIds = new Set(
+  (process.env.ADMIN_ROLE_IDS || "")
+    .split(",")
+    .map((roleId) => roleId.trim())
+    .filter(Boolean),
+);
 const shouldRestartAfterUpdate = process.env.RESTART_AFTER_UPDATE === "true";
 
 if (!token) {
@@ -58,7 +62,7 @@ function listConfiguredChannels(guild) {
         return null;
       }
 
-      return `${channel} — ${getChannelLabel(config.type)} code-only`;
+      return `${channel} — code-only`;
     })
     .filter(Boolean);
   const codeRecordsChannel = getRecordsChannel(guild, "code");
@@ -84,6 +88,10 @@ function canManageChannels(member) {
 }
 
 function canControlBot(member) {
+  if (adminRoleIds.size > 0) {
+    return member.roles.cache.some((role) => adminRoleIds.has(role.id));
+  }
+
   return member.permissions.has(PermissionFlagsBits.Administrator);
 }
 
@@ -106,7 +114,7 @@ async function sendUsage(message) {
       `- \`${prefix}referral Name | https://link | optional short description\``,
       "",
       "**Channel setup commands**",
-      `- \`${prefix}setcodechannel <casino|freesc> [#channel]\``,
+      `- \`${prefix}setcodechannel [#channel]\``,
       `- \`${prefix}unsetcodechannel [#channel]\``,
       `- \`${prefix}setcoderecordschannel [#channel]\``,
       `- \`${prefix}unsetcoderecordschannel\``,
@@ -121,12 +129,12 @@ async function sendUsage(message) {
   );
 }
 
-async function postCode(message, type, rawDetails) {
+async function postCode(message, rawDetails) {
   const submission = parseCodeSubmission(rawDetails);
 
   if (!submission) {
     await message.reply(
-      `Usage: \`${prefix}${type} Name | CODE | optional-link\``,
+      `Usage: \`${prefix}code Name | CODE | optional-link\``,
     );
     return;
   }
@@ -141,7 +149,7 @@ async function postCode(message, type, rawDetails) {
   }
 
   const lines = [
-    `**${type === "code" ? "Code Record" : `${getChannelLabel(type)} Freebie`}**`,
+    "**Code Record**",
     `**Place:** ${submission.name}`,
     `**Code:** \`${submission.code}\``,
   ];
@@ -218,7 +226,7 @@ async function updateBot(message) {
     return;
   }
 
-  await message.reply("Running the bot update command now.");
+  await message.reply(`Running update command:\n\`\`\`\n${updateCommand}\n\`\`\``);
 
   try {
     const { stdout, stderr } = await runUpdateCommand(updateCommand);
@@ -249,20 +257,18 @@ async function handleCommand(message) {
   }
 
   if (
-    command === "casino" ||
-    command === "freesc" ||
     command === "code"
   ) {
     const details = withoutPrefix.slice(commandName.length).trim();
 
     if (!details) {
       await message.reply(
-        `Usage: \`${prefix}${command} Name | CODE | optional-link\``,
+        `Usage: \`${prefix}code Name | CODE | optional-link\``,
       );
       return;
     }
 
-    await postCode(message, command, details);
+    await postCode(message, details);
     return;
   }
 
@@ -305,20 +311,10 @@ async function handleCommand(message) {
   }
 
   if (command === "setcodechannel") {
-    const requestedType = normalizeChannelType(args[0]);
     const targetChannel = getTargetChannel(message);
 
-    if (!requestedType) {
-      await message.reply(
-        `Usage: \`${prefix}setcodechannel <casino|freesc> [#channel]\``,
-      );
-      return;
-    }
-
-    upsertChannel(message.guild.id, targetChannel.id, requestedType);
-    await message.reply(
-      `${targetChannel} is now a ${getChannelLabel(requestedType)} code-only channel.`,
-    );
+    upsertChannel(message.guild.id, targetChannel.id, "code");
+    await message.reply(`${targetChannel} is now a code-only channel.`);
     return;
   }
 
@@ -370,7 +366,7 @@ async function handleCommand(message) {
 
   if (command === "restartbot" || command === "restart") {
     if (!canControlBot(message.member)) {
-      await message.reply("You need the Administrator permission to restart the bot.");
+      await message.reply("You need the configured bot admin role or Administrator permission to restart the bot.");
       return;
     }
 
@@ -380,7 +376,7 @@ async function handleCommand(message) {
 
   if (command === "updatebot" || command === "update") {
     if (!canControlBot(message.member)) {
-      await message.reply("You need the Administrator permission to update the bot.");
+      await message.reply("You need the configured bot admin role or Administrator permission to update the bot.");
       return;
     }
 

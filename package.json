@@ -1,10 +1,13 @@
 {
   "name": "posting-bot-",
   "version": "1.0.0",
-  "description": "Discord bot that keeps casino and free-SC channels code-only",
+  "description": "Discord bot for code and referral records",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "start:pm2": "pm2 start ecosystem.config.cjs",
+    "restart:pm2": "pm2 restart posting-bot",
+    "stop:pm2": "pm2 delete posting-bot",
     "test": "node --test"
   },
   "repository": {
