@@ -1,13 +1,13 @@
 # Posting-bot-
 
-Discord bot for keeping sweepstakes casino and Free SC channels code-only.
+Discord bot for keeping code channels clean and sending code or referral submissions into records channels.
 
 ## What it does
 
 - Lets moderators mark a text channel as a `casino` or `freesc` code-only channel
-- Lets moderators choose one records-only channel where the bot saves all freebies
+- Lets moderators choose one records-only channel for codes and one for referrals
 - Deletes normal chat from protected channels
-- Lets members submit a name, code, link, and short description from any channel
+- Lets members submit a code or referral from any channel with one command
 - Stores channel settings locally in `data/channels.json`
 
 ## Commands
@@ -15,15 +15,22 @@ Discord bot for keeping sweepstakes casino and Free SC channels code-only.
 - `!help`
 - `!setcodechannel <casino|freesc> [#channel]`
 - `!unsetcodechannel [#channel]`
-- `!setrecordschannel [#channel]`
-- `!unsetrecordschannel`
+- `!setcoderecordschannel [#channel]`
+- `!unsetcoderecordschannel`
+- `!setreferralrecordschannel [#channel]`
+- `!unsetreferralrecordschannel`
 - `!codechannels`
-- `!casino Name | CODE | https://link | short description`
-- `!freesc Name | CODE | https://link | short description`
+- `!code Name | CODE | optional-link`
+- `!referral Name | https://link | optional short description`
+
+Legacy aliases still work:
+
+- `!casino Name | CODE | optional-link`
+- `!freesc Name | CODE | optional-link`
 
 If a protected channel is configured, members can also post a bare code directly as long as it is a single token made of letters, numbers, `_`, or `-`.
 
-All `!casino` and `!freesc` submissions can be run in any channel. The bot sends the finished freebie entry into the configured records channel.
+All `!code`, `!casino`, `!freesc`, and `!referral` submissions can be run in any channel. The bot sends each one into the correct configured records channel.
 
 ## Setup
 

@@ -39,7 +39,15 @@ function isValidUrl(value) {
   }
 }
 
-function parseSubmissionParts(value) {
+function isValidName(value) {
+  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 80;
+}
+
+function isValidDescription(value) {
+  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 200;
+}
+
+function parseCodeSubmission(value) {
   if (typeof value !== "string") {
     return null;
   }
@@ -49,23 +57,53 @@ function parseSubmissionParts(value) {
     .map((part) => part.trim())
     .filter(Boolean);
 
-  if (parts.length !== 4) {
+  if (parts.length < 2 || parts.length > 3) {
     return null;
   }
 
-  const [name, code, link, description] = parts;
+  const [name, code, link] = parts;
 
-  if (!name || name.length > 80 || !isValidCode(code) || !isValidUrl(link)) {
+  if (!isValidName(name) || !isValidCode(code)) {
     return null;
   }
 
-  if (!description || description.length > 200) {
+  if (link && !isValidUrl(link)) {
     return null;
   }
 
   return {
     code,
-    description,
+    link: link ?? null,
+    name,
+  };
+}
+
+function parseReferralSubmission(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const parts = value
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length < 2 || parts.length > 3) {
+    return null;
+  }
+
+  const [name, link, description] = parts;
+
+  if (!isValidName(name) || !isValidUrl(link)) {
+    return null;
+  }
+
+  if (description && !isValidDescription(description)) {
+    return null;
+  }
+
+  return {
+    description: description ?? null,
     link,
     name,
   };
@@ -86,7 +124,10 @@ function getChannelLabel(type) {
 module.exports = {
   getChannelLabel,
   isValidCode,
+  isValidDescription,
+  isValidName,
   isValidUrl,
   normalizeChannelType,
-  parseSubmissionParts,
+  parseCodeSubmission,
+  parseReferralSubmission,
 };

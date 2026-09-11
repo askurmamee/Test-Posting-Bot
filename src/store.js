@@ -25,12 +25,30 @@ function writeStore(data) {
 
 function getGuildConfig(guildId) {
   const store = readStore();
-  return store.guilds[guildId] ?? { channels: {}, recordsChannelId: null };
+  const guildConfig = store.guilds[guildId];
+
+  if (!guildConfig) {
+    return {
+      channels: {},
+      codeRecordsChannelId: null,
+      referralRecordsChannelId: null,
+    };
+  }
+
+  return {
+    channels: guildConfig.channels ?? {},
+    codeRecordsChannelId: guildConfig.codeRecordsChannelId ?? guildConfig.recordsChannelId ?? null,
+    referralRecordsChannelId: guildConfig.referralRecordsChannelId ?? null,
+  };
 }
 
 function upsertChannel(guildId, channelId, type) {
   const store = readStore();
-  store.guilds[guildId] ??= { channels: {}, recordsChannelId: null };
+  store.guilds[guildId] ??= {
+    channels: {},
+    codeRecordsChannelId: null,
+    referralRecordsChannelId: null,
+  };
   store.guilds[guildId].channels[channelId] = { type };
   writeStore(store);
 }
@@ -48,22 +66,27 @@ function removeChannel(guildId, channelId) {
   return true;
 }
 
-function setRecordsChannel(guildId, channelId) {
+function setRecordsChannel(guildId, recordType, channelId) {
   const store = readStore();
-  store.guilds[guildId] ??= { channels: {}, recordsChannelId: null };
-  store.guilds[guildId].recordsChannelId = channelId;
+  store.guilds[guildId] ??= {
+    channels: {},
+    codeRecordsChannelId: null,
+    referralRecordsChannelId: null,
+  };
+  store.guilds[guildId][`${recordType}RecordsChannelId`] = channelId;
   writeStore(store);
 }
 
-function clearRecordsChannel(guildId) {
+function clearRecordsChannel(guildId, recordType) {
   const store = readStore();
   const guildConfig = store.guilds[guildId];
+  const propertyName = `${recordType}RecordsChannelId`;
 
-  if (!guildConfig?.recordsChannelId) {
+  if (!guildConfig?.[propertyName]) {
     return false;
   }
 
-  guildConfig.recordsChannelId = null;
+  guildConfig[propertyName] = null;
   writeStore(store);
   return true;
 }

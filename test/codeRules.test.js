@@ -4,9 +4,12 @@ const assert = require("node:assert/strict");
 const {
   getChannelLabel,
   isValidCode,
+  isValidDescription,
+  isValidName,
   isValidUrl,
   normalizeChannelType,
-  parseSubmissionParts,
+  parseCodeSubmission,
+  parseReferralSubmission,
 } = require("../src/codeRules");
 
 test("normalizeChannelType accepts aliases", () => {
@@ -39,21 +42,47 @@ test("isValidUrl only accepts http and https urls", () => {
   assert.equal(isValidUrl("ftp://example.com"), false);
 });
 
-test("parseSubmissionParts parses the bot submission format", () => {
+test("name and description validators enforce limits", () => {
+  assert.equal(isValidName("Chumba Casino"), true);
+  assert.equal(isValidName(""), false);
+  assert.equal(isValidDescription("Daily free coins"), true);
+  assert.equal(isValidDescription(""), false);
+});
+
+test("parseCodeSubmission parses the bot code format with optional link", () => {
   assert.deepEqual(
-    parseSubmissionParts(
-      "Lucky Land | LUCKY2026 | https://example.com/deal | Daily free coins",
-    ),
+    parseCodeSubmission("Lucky Land | LUCKY2026 | https://example.com/deal"),
     {
       code: "LUCKY2026",
-      description: "Daily free coins",
+      link: "https://example.com/deal",
+      name: "Lucky Land",
+    },
+  );
+
+  assert.deepEqual(parseCodeSubmission("Lucky Land | LUCKY2026"), {
+    code: "LUCKY2026",
+    link: null,
+    name: "Lucky Land",
+  });
+});
+
+test("parseCodeSubmission rejects invalid submissions", () => {
+  assert.equal(parseCodeSubmission("Lucky Land | https://example.com"), null);
+  assert.equal(parseCodeSubmission("Lucky Land | BAD CODE | https://example.com"), null);
+});
+
+test("parseReferralSubmission parses the referral format", () => {
+  assert.deepEqual(
+    parseReferralSubmission("Lucky Land | https://example.com/deal | Signup bonus"),
+    {
+      description: "Signup bonus",
       link: "https://example.com/deal",
       name: "Lucky Land",
     },
   );
 });
 
-test("parseSubmissionParts rejects invalid submissions", () => {
-  assert.equal(parseSubmissionParts("Lucky Land | https://example.com | bad"), null);
-  assert.equal(parseSubmissionParts("Lucky Land | BAD CODE | https://example.com | deal"), null);
+test("parseReferralSubmission rejects invalid data", () => {
+  assert.equal(parseReferralSubmission("Lucky Land | bad-link"), null);
+  assert.equal(parseReferralSubmission(" | https://example.com"), null);
 });

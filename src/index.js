@@ -11,7 +11,8 @@ const {
   getChannelLabel,
   isValidCode,
   normalizeChannelType,
-  parseSubmissionParts,
+  parseCodeSubmission,
+  parseReferralSubmission,
 } = require("./codeRules");
 const {
   clearRecordsChannel,
@@ -40,8 +41,8 @@ function getConfiguredType(guildId, channelId) {
   return getGuildConfig(guildId).channels[channelId]?.type ?? null;
 }
 
-function getRecordsChannel(guild) {
-  const recordsChannelId = getGuildConfig(guild.id).recordsChannelId;
+function getRecordsChannel(guild, kind) {
+  const recordsChannelId = getGuildConfig(guild.id)[`${kind}RecordsChannelId`];
   return recordsChannelId ? guild.channels.cache.get(recordsChannelId) ?? null : null;
 }
 
@@ -58,10 +59,15 @@ function listConfiguredChannels(guild) {
       return `${channel} — ${getChannelLabel(config.type)} code-only`;
     })
     .filter(Boolean);
-  const recordsChannel = getRecordsChannel(guild);
+  const codeRecordsChannel = getRecordsChannel(guild, "code");
+  const referralRecordsChannel = getRecordsChannel(guild, "referral");
 
-  if (recordsChannel) {
-    configured.push(`${recordsChannel} — freebies records`);
+  if (codeRecordsChannel) {
+    configured.push(`${codeRecordsChannel} — code records`);
+  }
+
+  if (referralRecordsChannel) {
+    configured.push(`${referralRecordsChannel} — referral records`);
   }
 
   return configured;
@@ -71,48 +77,92 @@ async function sendUsage(message) {
   await message.reply(
     [
       `Use \`${prefix}setcodechannel <casino|freesc> [#channel]\` to mark a code-only channel.`,
-      `Use \`${prefix}setrecordschannel [#channel]\` to choose the freebies records channel.`,
-      `Use \`${prefix}casino Name | CODE | https://link | short description\` from any channel.`,
-      `Use \`${prefix}freesc Name | CODE | https://link | short description\` from any channel.`,
+      `Use \`${prefix}setcoderecordschannel [#channel]\` to choose the code records channel.`,
+      `Use \`${prefix}setreferralrecordschannel [#channel]\` to choose the referral records channel.`,
+      `Use \`${prefix}code Name | CODE | optional-link\` from any channel.`,
+      `Use \`${prefix}referral Name | https://link | optional short description\` from any channel.`,
       `Use \`${prefix}codechannels\` to list the protected and records channels.`,
     ].join("\n"),
   );
 }
 
 async function postCode(message, type, rawDetails) {
-  const submission = parseSubmissionParts(rawDetails);
+  const submission = parseCodeSubmission(rawDetails);
 
   if (!submission) {
     await message.reply(
-      `Usage: \`${prefix}${type} Name | CODE | https://link | short description\``,
+      `Usage: \`${prefix}${type} Name | CODE | optional-link\``,
     );
     return;
   }
 
-  const targetChannel = getRecordsChannel(message.guild);
+  const targetChannel = getRecordsChannel(message.guild, "code");
 
   if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
     await message.reply(
-      "I could not find the freebies records channel in this server.",
+      "I could not find the code records channel in this server.",
     );
     return;
   }
 
-  await targetChannel.send(
-    [
-      `**${getChannelLabel(type)} Freebie**`,
-      `**Name:** ${submission.name}`,
-      `**Code:** \`${submission.code}\``,
-      `**Link:** ${submission.link}`,
-      `**About:** ${submission.description}`,
-      `**Shared by:** ${message.author}`,
-    ].join("\n"),
-  );
+  const lines = [
+    `**${type === "code" ? "Code Record" : `${getChannelLabel(type)} Freebie`}**`,
+    `**Place:** ${submission.name}`,
+    `**Code:** \`${submission.code}\``,
+  ];
+
+  if (submission.link) {
+    lines.push(`**Link:** ${submission.link}`);
+  }
+
+  lines.push(`**Shared by:** ${message.author}`);
+
+  await targetChannel.send(lines.join("\n"));
 
   if (targetChannel.id === message.channel.id) {
     await message.delete().catch(() => null);
   } else {
-    await message.reply(`Saved that ${getChannelLabel(type)} freebie in ${targetChannel}.`);
+    await message.reply(`Saved that code in ${targetChannel}.`);
+  }
+}
+
+async function postReferral(message, rawDetails) {
+  const submission = parseReferralSubmission(rawDetails);
+
+  if (!submission) {
+    await message.reply(
+      `Usage: \`${prefix}referral Name | https://link | optional short description\``,
+    );
+    return;
+  }
+
+  const targetChannel = getRecordsChannel(message.guild, "referral");
+
+  if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
+    await message.reply(
+      "I could not find the referral records channel in this server.",
+    );
+    return;
+  }
+
+  const lines = [
+    "**Referral Record**",
+    `**Place:** ${submission.name}`,
+    `**Link:** ${submission.link}`,
+  ];
+
+  if (submission.description) {
+    lines.push(`**About:** ${submission.description}`);
+  }
+
+  lines.push(`**Shared by:** ${message.author}`);
+
+  await targetChannel.send(lines.join("\n"));
+
+  if (targetChannel.id === message.channel.id) {
+    await message.delete().catch(() => null);
+  } else {
+    await message.reply(`Saved that referral in ${targetChannel}.`);
   }
 }
 
@@ -131,17 +181,35 @@ async function handleCommand(message) {
     return;
   }
 
-  if (command === "casino" || command === "freesc") {
+  if (
+    command === "casino" ||
+    command === "freesc" ||
+    command === "code"
+  ) {
     const details = withoutPrefix.slice(commandName.length).trim();
 
     if (!details) {
       await message.reply(
-        `Usage: \`${prefix}${command} Name | CODE | https://link | short description\``,
+        `Usage: \`${prefix}${command} Name | CODE | optional-link\``,
       );
       return;
     }
 
     await postCode(message, command, details);
+    return;
+  }
+
+  if (command === "referral") {
+    const details = withoutPrefix.slice(commandName.length).trim();
+
+    if (!details) {
+      await message.reply(
+        `Usage: \`${prefix}referral Name | https://link | optional short description\``,
+      );
+      return;
+    }
+
+    await postReferral(message, details);
     return;
   }
 
@@ -158,8 +226,10 @@ async function handleCommand(message) {
   if (
     command === "setcodechannel" ||
     command === "unsetcodechannel" ||
-    command === "setrecordschannel" ||
-    command === "unsetrecordschannel"
+    command === "setcoderecordschannel" ||
+    command === "unsetcoderecordschannel" ||
+    command === "setreferralrecordschannel" ||
+    command === "unsetreferralrecordschannel"
   ) {
     const hasPermission = message.member.permissions.has(
       PermissionFlagsBits.ManageChannels,
@@ -201,19 +271,36 @@ async function handleCommand(message) {
     return;
   }
 
-  if (command === "setrecordschannel") {
+  if (command === "setcoderecordschannel") {
     const targetChannel = message.mentions.channels.first() ?? message.channel;
-    setRecordsChannel(message.guild.id, targetChannel.id);
-    await message.reply(`${targetChannel} is now the freebies records channel.`);
+    setRecordsChannel(message.guild.id, "code", targetChannel.id);
+    await message.reply(`${targetChannel} is now the code records channel.`);
     return;
   }
 
-  if (command === "unsetrecordschannel") {
-    const removed = clearRecordsChannel(message.guild.id);
+  if (command === "unsetcoderecordschannel") {
+    const removed = clearRecordsChannel(message.guild.id, "code");
     await message.reply(
       removed
-        ? "The freebies records channel has been cleared."
-        : "There is no freebies records channel configured right now.",
+        ? "The code records channel has been cleared."
+        : "There is no code records channel configured right now.",
+    );
+    return;
+  }
+
+  if (command === "setreferralrecordschannel") {
+    const targetChannel = message.mentions.channels.first() ?? message.channel;
+    setRecordsChannel(message.guild.id, "referral", targetChannel.id);
+    await message.reply(`${targetChannel} is now the referral records channel.`);
+    return;
+  }
+
+  if (command === "unsetreferralrecordschannel") {
+    const removed = clearRecordsChannel(message.guild.id, "referral");
+    await message.reply(
+      removed
+        ? "The referral records channel has been cleared."
+        : "There is no referral records channel configured right now.",
     );
     return;
   }
@@ -222,14 +309,18 @@ async function handleCommand(message) {
 }
 
 async function moderateCodeOnlyChannel(message) {
-  const recordsChannel = getRecordsChannel(message.guild);
+  const codeRecordsChannel = getRecordsChannel(message.guild, "code");
+  const referralRecordsChannel = getRecordsChannel(message.guild, "referral");
   const configuredType = getConfiguredType(message.guild.id, message.channel.id);
 
   if (message.content.startsWith(prefix)) {
     return;
   }
 
-  if (recordsChannel?.id === message.channel.id) {
+  if (
+    codeRecordsChannel?.id === message.channel.id ||
+    referralRecordsChannel?.id === message.channel.id
+  ) {
     await message.delete().catch(() => null);
 
     const notice = `${message.author}, this channel is records-only. Use bot commands from any channel to add freebies here.`;
