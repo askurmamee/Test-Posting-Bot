@@ -5,8 +5,9 @@ Discord bot for keeping sweepstakes casino and Free SC channels code-only.
 ## What it does
 
 - Lets moderators mark a text channel as a `casino` or `freesc` code-only channel
+- Lets moderators choose one records-only channel where the bot saves all freebies
 - Deletes normal chat from protected channels
-- Lets members submit codes with simple bot commands
+- Lets members submit a name, code, link, and short description from any channel
 - Stores channel settings locally in `data/channels.json`
 
 ## Commands
@@ -14,11 +15,15 @@ Discord bot for keeping sweepstakes casino and Free SC channels code-only.
 - `!help`
 - `!setcodechannel <casino|freesc> [#channel]`
 - `!unsetcodechannel [#channel]`
+- `!setrecordschannel [#channel]`
+- `!unsetrecordschannel`
 - `!codechannels`
-- `!casino <CODE>`
-- `!freesc <CODE>`
+- `!casino Name | CODE | https://link | short description`
+- `!freesc Name | CODE | https://link | short description`
 
 If a protected channel is configured, members can also post a bare code directly as long as it is a single token made of letters, numbers, `_`, or `-`.
+
+All `!casino` and `!freesc` submissions can be run in any channel. The bot sends the finished freebie entry into the configured records channel.
 
 ## Setup
 

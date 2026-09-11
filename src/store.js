@@ -25,12 +25,12 @@ function writeStore(data) {
 
 function getGuildConfig(guildId) {
   const store = readStore();
-  return store.guilds[guildId] ?? { channels: {} };
+  return store.guilds[guildId] ?? { channels: {}, recordsChannelId: null };
 }
 
 function upsertChannel(guildId, channelId, type) {
   const store = readStore();
-  store.guilds[guildId] ??= { channels: {} };
+  store.guilds[guildId] ??= { channels: {}, recordsChannelId: null };
   store.guilds[guildId].channels[channelId] = { type };
   writeStore(store);
 }
@@ -48,8 +48,30 @@ function removeChannel(guildId, channelId) {
   return true;
 }
 
+function setRecordsChannel(guildId, channelId) {
+  const store = readStore();
+  store.guilds[guildId] ??= { channels: {}, recordsChannelId: null };
+  store.guilds[guildId].recordsChannelId = channelId;
+  writeStore(store);
+}
+
+function clearRecordsChannel(guildId) {
+  const store = readStore();
+  const guildConfig = store.guilds[guildId];
+
+  if (!guildConfig?.recordsChannelId) {
+    return false;
+  }
+
+  guildConfig.recordsChannelId = null;
+  writeStore(store);
+  return true;
+}
+
 module.exports = {
+  clearRecordsChannel,
   getGuildConfig,
   removeChannel,
+  setRecordsChannel,
   upsertChannel,
 };

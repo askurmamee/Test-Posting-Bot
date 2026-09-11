@@ -11,8 +11,15 @@ const {
   getChannelLabel,
   isValidCode,
   normalizeChannelType,
+  parseSubmissionParts,
 } = require("./codeRules");
-const { getGuildConfig, removeChannel, upsertChannel } = require("./store");
+const {
+  clearRecordsChannel,
+  getGuildConfig,
+  removeChannel,
+  setRecordsChannel,
+  upsertChannel,
+} = require("./store");
 
 const token = process.env.DISCORD_TOKEN;
 const prefix = process.env.BOT_PREFIX?.trim() || "!";
@@ -33,10 +40,14 @@ function getConfiguredType(guildId, channelId) {
   return getGuildConfig(guildId).channels[channelId]?.type ?? null;
 }
 
+function getRecordsChannel(guild) {
+  const recordsChannelId = getGuildConfig(guild.id).recordsChannelId;
+  return recordsChannelId ? guild.channels.cache.get(recordsChannelId) ?? null : null;
+}
+
 function listConfiguredChannels(guild) {
   const guildConfig = getGuildConfig(guild.id);
-
-  return Object.entries(guildConfig.channels)
+  const configured = Object.entries(guildConfig.channels)
     .map(([channelId, config]) => {
       const channel = guild.channels.cache.get(channelId);
 
@@ -44,66 +55,64 @@ function listConfiguredChannels(guild) {
         return null;
       }
 
-      return `${channel} — ${getChannelLabel(config.type)}`;
+      return `${channel} — ${getChannelLabel(config.type)} code-only`;
     })
     .filter(Boolean);
-}
+  const recordsChannel = getRecordsChannel(guild);
 
-function findTargetChannel(guild, requestedType, currentChannelId) {
-  const guildConfig = getGuildConfig(guild.id);
-  const configuredEntries = Object.entries(guildConfig.channels);
-
-  const current = configuredEntries.find(
-    ([channelId, config]) =>
-      channelId === currentChannelId && config.type === requestedType,
-  );
-
-  const fallback =
-    current ??
-    configuredEntries.find(([, config]) => config.type === requestedType);
-
-  if (!fallback) {
-    return null;
+  if (recordsChannel) {
+    configured.push(`${recordsChannel} — freebies records`);
   }
 
-  const [channelId] = fallback;
-  return guild.channels.cache.get(channelId) ?? null;
+  return configured;
 }
 
 async function sendUsage(message) {
   await message.reply(
     [
       `Use \`${prefix}setcodechannel <casino|freesc> [#channel]\` to mark a code-only channel.`,
-      `Use \`${prefix}casino <CODE>\` to post a sweepstakes casino code.`,
-      `Use \`${prefix}freesc <CODE>\` to post a free SC code.`,
-      `Use \`${prefix}codechannels\` to list the protected channels.`,
+      `Use \`${prefix}setrecordschannel [#channel]\` to choose the freebies records channel.`,
+      `Use \`${prefix}casino Name | CODE | https://link | short description\` from any channel.`,
+      `Use \`${prefix}freesc Name | CODE | https://link | short description\` from any channel.`,
+      `Use \`${prefix}codechannels\` to list the protected and records channels.`,
     ].join("\n"),
   );
 }
 
-async function postCode(message, type, code) {
-  if (!isValidCode(code)) {
+async function postCode(message, type, rawDetails) {
+  const submission = parseSubmissionParts(rawDetails);
+
+  if (!submission) {
     await message.reply(
-      "That code format is not valid. Use one code with only letters, numbers, `_`, or `-`.",
+      `Usage: \`${prefix}${type} Name | CODE | https://link | short description\``,
     );
     return;
   }
 
-  const targetChannel = findTargetChannel(message.guild, type, message.channel.id);
+  const targetChannel = getRecordsChannel(message.guild);
 
   if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
     await message.reply(
-      `I could not find a configured ${getChannelLabel(type)} code channel in this server.`,
+      "I could not find the freebies records channel in this server.",
     );
     return;
   }
 
-  await targetChannel.send(`**${getChannelLabel(type)} code:** \`${code}\``);
+  await targetChannel.send(
+    [
+      `**${getChannelLabel(type)} Freebie**`,
+      `**Name:** ${submission.name}`,
+      `**Code:** \`${submission.code}\``,
+      `**Link:** ${submission.link}`,
+      `**About:** ${submission.description}`,
+      `**Shared by:** ${message.author}`,
+    ].join("\n"),
+  );
 
   if (targetChannel.id === message.channel.id) {
-    await message.react("✅");
+    await message.delete().catch(() => null);
   } else {
-    await message.reply(`Posted ${code} in ${targetChannel}.`);
+    await message.reply(`Saved that ${getChannelLabel(type)} freebie in ${targetChannel}.`);
   }
 }
 
@@ -123,14 +132,16 @@ async function handleCommand(message) {
   }
 
   if (command === "casino" || command === "freesc") {
-    const code = args[0];
+    const details = withoutPrefix.slice(commandName.length).trim();
 
-    if (!code) {
-      await message.reply(`Usage: \`${prefix}${command} <CODE>\``);
+    if (!details) {
+      await message.reply(
+        `Usage: \`${prefix}${command} Name | CODE | https://link | short description\``,
+      );
       return;
     }
 
-    await postCode(message, command, code);
+    await postCode(message, command, details);
     return;
   }
 
@@ -144,7 +155,12 @@ async function handleCommand(message) {
     return;
   }
 
-  if (command === "setcodechannel" || command === "unsetcodechannel") {
+  if (
+    command === "setcodechannel" ||
+    command === "unsetcodechannel" ||
+    command === "setrecordschannel" ||
+    command === "unsetrecordschannel"
+  ) {
     const hasPermission = message.member.permissions.has(
       PermissionFlagsBits.ManageChannels,
     );
@@ -185,17 +201,50 @@ async function handleCommand(message) {
     return;
   }
 
+  if (command === "setrecordschannel") {
+    const targetChannel = message.mentions.channels.first() ?? message.channel;
+    setRecordsChannel(message.guild.id, targetChannel.id);
+    await message.reply(`${targetChannel} is now the freebies records channel.`);
+    return;
+  }
+
+  if (command === "unsetrecordschannel") {
+    const removed = clearRecordsChannel(message.guild.id);
+    await message.reply(
+      removed
+        ? "The freebies records channel has been cleared."
+        : "There is no freebies records channel configured right now.",
+    );
+    return;
+  }
+
   await message.reply(`Unknown command. Use \`${prefix}help\` for the command list.`);
 }
 
 async function moderateCodeOnlyChannel(message) {
+  const recordsChannel = getRecordsChannel(message.guild);
   const configuredType = getConfiguredType(message.guild.id, message.channel.id);
 
-  if (!configuredType) {
+  if (message.content.startsWith(prefix)) {
     return;
   }
 
-  if (message.content.startsWith(prefix)) {
+  if (recordsChannel?.id === message.channel.id) {
+    await message.delete().catch(() => null);
+
+    const notice = `${message.author}, this channel is records-only. Use bot commands from any channel to add freebies here.`;
+    await message.channel
+      .send(notice)
+      .then((sent) => {
+        setTimeout(() => {
+          sent.delete().catch(() => null);
+        }, 5000);
+      })
+      .catch(() => null);
+    return;
+  }
+
+  if (!configuredType) {
     return;
   }
 
