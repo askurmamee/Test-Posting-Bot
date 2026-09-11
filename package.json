@@ -1,0 +1,21 @@
+{
+  "name": "posting-bot-",
+  "version": "1.0.0",
+  "description": "Discord bot that keeps casino and free-SC channels code-only",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/askurmamee/Posting-bot-"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.4.2"
+  }
+}
