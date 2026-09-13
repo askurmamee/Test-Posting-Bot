@@ -32,7 +32,8 @@ const adminRoleIds = new Set(
 const shouldRestartAfterUpdate = process.env.RESTART_AFTER_UPDATE === "true";
 
 if (!token) {
-  throw new Error("Missing DISCORD_TOKEN in environment.");
+  console.error("Missing DISCORD_TOKEN in environment.");
+  process.exit(1);
 }
 
 const client = new Client({
@@ -84,15 +85,19 @@ function getTargetChannel(message) {
 }
 
 function canManageChannels(member) {
-  return member.permissions.has(PermissionFlagsBits.ManageChannels);
+  return Boolean(member?.permissions?.has(PermissionFlagsBits.ManageChannels));
 }
 
 function canControlBot(member) {
-  if (adminRoleIds.size > 0) {
-    return member.roles.cache.some((role) => adminRoleIds.has(role.id));
+  if (!member) {
+    return false;
   }
 
-  return member.permissions.has(PermissionFlagsBits.Administrator);
+  if (adminRoleIds.size > 0) {
+    return member.roles?.cache?.some((role) => adminRoleIds.has(role.id)) ?? false;
+  }
+
+  return Boolean(member.permissions?.has(PermissionFlagsBits.Administrator));
 }
 
 async function sendTemporaryNotice(channel, text) {
@@ -427,6 +432,19 @@ client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
+client.on("error", (error) => {
+  console.error("Discord client error:", error);
+});
+
+process.on("unhandledRejection", (error) => {
+  console.error("Unhandled promise rejection:", error);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+  process.exit(1);
+});
+
 client.on("messageCreate", async (message) => {
   if (message.author.bot || !message.guild) {
     return;
@@ -440,7 +458,12 @@ client.on("messageCreate", async (message) => {
     return;
   }
 
-  await moderateCodeOnlyChannel(message);
+  await moderateCodeOnlyChannel(message).catch((error) => {
+    console.error("Moderation failed:", error);
+  });
 });
 
-client.login(token);
+client.login(token).catch((error) => {
+  console.error("Failed to log in to Discord:", error);
+  process.exit(1);
+});

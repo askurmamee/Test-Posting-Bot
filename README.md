@@ -39,7 +39,8 @@ All `!code` and `!referral` submissions can be run in any channel. The bot sends
 4. Optional: set `ADMIN_ROLE_IDS` to a comma-separated list of Discord role IDs allowed to use `!restartbot` and `!updatebot`
 5. Optional: set `UPDATE_COMMAND` if you want `!updatebot` to run a server-side update command
 6. Optional: set `RESTART_AFTER_UPDATE=true` if the bot should restart after a successful update
-7. Start the bot:
+7. Optional: set `CHANNEL_STORE_DIR` if you want to store `channels.json` outside the default `./data` folder
+8. Start the bot:
    - `npm start`
 
 ## Smooth hosting
@@ -68,7 +69,7 @@ You can also use Docker restart policies or systemd if you prefer.
 - Keep `UPDATE_COMMAND` simple and predictable, for example:
   - `git pull --ff-only && npm install --omit=dev`
 - Only run `!updatebot` on the machine that is actually hosting the bot
-- Keep `/home/runner/work/Posting-bot-/Posting-bot-/data/channels.json` on persistent storage or back it up before redeploys
+- Keep `/home/runner/work/Posting-bot-/Posting-bot-/data/channels.json` (or your configured `CHANNEL_STORE_DIR`) on persistent storage or back it up before redeploys
 
 ## Discord bot permissions
 
