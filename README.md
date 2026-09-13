@@ -52,7 +52,7 @@ Recommended default: **PM2**
 2. Install dependencies:
    - `npm install`
 3. Start with PM2:
-   - `npx pm2 start /home/runner/work/Posting-bot-/Posting-bot-/ecosystem.config.cjs`
+   - `npx pm2 start ecosystem.config.cjs`
 4. Save the PM2 process list:
    - `npx pm2 save`
 
@@ -69,7 +69,7 @@ You can also use Docker restart policies or systemd if you prefer.
 - Keep `UPDATE_COMMAND` simple and predictable, for example:
   - `git pull --ff-only && npm install --omit=dev`
 - Only run `!updatebot` on the machine that is actually hosting the bot
-- Keep `/home/runner/work/Posting-bot-/Posting-bot-/data/channels.json` (or your configured `CHANNEL_STORE_DIR`) on persistent storage or back it up before redeploys
+- Keep `data/channels.json` (or your configured `CHANNEL_STORE_DIR`) on persistent storage or back it up before redeploys
 
 ## Discord bot permissions
 

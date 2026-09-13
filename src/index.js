@@ -63,7 +63,8 @@ function listConfiguredChannels(guild) {
         return null;
       }
 
-      return `${channel} — code-only`;
+      const typeLabel = config?.type === "code" ? "code-only" : config?.type ?? "configured";
+      return `${channel} — ${typeLabel}`;
     })
     .filter(Boolean);
   const codeRecordsChannel = getRecordsChannel(guild, "code");
@@ -81,7 +82,8 @@ function listConfiguredChannels(guild) {
 }
 
 function getTargetChannel(message) {
-  return message.mentions.channels.first() ?? message.channel;
+  const mentionedChannel = message.mentions.channels.first();
+  return mentionedChannel?.guild?.id === message.guild.id ? mentionedChannel : message.channel;
 }
 
 function canManageChannels(member) {
@@ -216,7 +218,10 @@ async function postReferral(message, rawDetails) {
 
 async function restartBot(message) {
   await message.reply("Restarting the bot now.");
+  scheduleRestart();
+}
 
+function scheduleRestart() {
   setTimeout(() => {
     client.destroy();
     process.exit(0);
@@ -235,11 +240,15 @@ async function updateBot(message) {
 
   try {
     const { stdout, stderr } = await runUpdateCommand(updateCommand);
-    await message.reply(`Update finished.\n\`\`\`\n${formatCommandOutput(stdout, stderr)}\n\`\`\``);
+    const output = formatCommandOutput(stdout, stderr);
 
     if (shouldRestartAfterUpdate) {
-      await restartBot(message);
+      await message.reply(`Update finished. Restarting the bot now.\n\`\`\`\n${output}\n\`\`\``);
+      scheduleRestart();
+      return;
     }
+
+    await message.reply(`Update finished.\n\`\`\`\n${output}\n\`\`\``);
   } catch (result) {
     const output = formatCommandOutput(result.stdout, result.stderr || result.error?.message);
     await message.reply(`Update failed.\n\`\`\`\n${output}\n\`\`\``);

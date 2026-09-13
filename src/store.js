@@ -6,6 +6,7 @@ const dataDir = configuredDataDir
   ? path.resolve(process.cwd(), configuredDataDir)
   : path.join(process.cwd(), "data");
 const storePath = path.join(dataDir, "channels.json");
+const validRecordTypes = new Set(["code", "referral"]);
 
 function createDefaultStore() {
   return { guilds: {} };
@@ -48,7 +49,7 @@ function readStore() {
 
 function writeStore(data) {
   ensureStore();
-  const tempPath = `${storePath}.tmp`;
+  const tempPath = `${storePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   const normalized = normalizeStore(data);
   fs.writeFileSync(tempPath, JSON.stringify(normalized, null, 2));
   fs.renameSync(tempPath, storePath);
@@ -98,6 +99,10 @@ function removeChannel(guildId, channelId) {
 }
 
 function setRecordsChannel(guildId, recordType, channelId) {
+  if (!validRecordTypes.has(recordType)) {
+    return false;
+  }
+
   const store = readStore();
   store.guilds[guildId] ??= {
     channels: {},
@@ -106,9 +111,14 @@ function setRecordsChannel(guildId, recordType, channelId) {
   };
   store.guilds[guildId][`${recordType}RecordsChannelId`] = channelId;
   writeStore(store);
+  return true;
 }
 
 function clearRecordsChannel(guildId, recordType) {
+  if (!validRecordTypes.has(recordType)) {
+    return false;
+  }
+
   const store = readStore();
   const guildConfig = store.guilds[guildId];
   const propertyName = `${recordType}RecordsChannelId`;

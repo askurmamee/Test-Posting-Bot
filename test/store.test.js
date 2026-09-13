@@ -38,6 +38,27 @@ test("store recovers from invalid json without throwing", () => {
   assert.deepEqual(repairedStore, { guilds: {} });
 });
 
+test("store normalizes malformed but parseable content", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "posting-bot-store-"));
+  const storePath = path.join(tempDir, "channels.json");
+  fs.writeFileSync(storePath, "{}");
+
+  const { getGuildConfig } = loadStoreModule(tempDir);
+
+  assert.deepEqual(getGuildConfig("guild-1"), {
+    channels: {},
+    codeRecordsChannelId: null,
+    referralRecordsChannelId: null,
+  });
+
+  fs.writeFileSync(storePath, "[]");
+  assert.deepEqual(getGuildConfig("guild-2"), {
+    channels: {},
+    codeRecordsChannelId: null,
+    referralRecordsChannelId: null,
+  });
+});
+
 test("store writes and reads guild channel configuration", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "posting-bot-store-"));
   const { getGuildConfig, setRecordsChannel, upsertChannel } = loadStoreModule(tempDir);
