@@ -28,11 +28,7 @@ const {
   upsertChannel,
 } = require("./store");
 const { formatCommandOutput, runUpdateCommand } = require("./control");
-const {
-  buildRecordMessage,
-  buildRecordsChannelCreateOptions,
-  getRecordsChannelName,
-} = require("./records");
+const { buildRecordMessage, ensureGuildRecordsChannel } = require("./records");
 
 const token = process.env.DISCORD_TOKEN;
 const adminRoleIds = new Set(
@@ -155,7 +151,12 @@ async function postCode(guild, userMention, currentChannelId, rawDetails) {
 
   const targetChannel = await withGuildMutationLock(
     guild.id,
-    () => ensureGuildRecordsChannel(guild, "code", { reason: "Auto-created code records channel for a code submission" }),
+    () => ensureGuildRecordsChannel(guild, "code", {
+      botUserId: client.user.id,
+      configuredChannelId: getGuildConfig(guild.id).codeRecordsChannelId,
+      reason: "Auto-created code records channel for a code submission",
+      setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "code", channelId),
+    }),
   );
   await targetChannel.send(buildRecordMessage("code", submission, userMention));
 
@@ -177,7 +178,12 @@ async function postReferral(guild, userMention, currentChannelId, rawDetails) {
 
   const targetChannel = await withGuildMutationLock(
     guild.id,
-    () => ensureGuildRecordsChannel(guild, "referral", { reason: "Auto-created referral records channel for a referral submission" }),
+    () => ensureGuildRecordsChannel(guild, "referral", {
+      botUserId: client.user.id,
+      configuredChannelId: getGuildConfig(guild.id).referralRecordsChannelId,
+      reason: "Auto-created referral records channel for a referral submission",
+      setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "referral", channelId),
+    }),
   );
   await targetChannel.send(buildRecordMessage("referral", submission, userMention));
 
@@ -393,64 +399,20 @@ async function syncGuildSlashCommands(guild) {
   );
 }
 
-async function fetchGuildTextChannel(guild, channelId) {
-  if (!channelId) {
-    return null;
-  }
-
-  const cachedChannel = guild.channels.cache.get(channelId);
-
-  if (cachedChannel) {
-    return cachedChannel.type === ChannelType.GuildText ? cachedChannel : null;
-  }
-
-  const fetchedChannel = await guild.channels.fetch(channelId).catch(() => null);
-
-  return fetchedChannel?.type === ChannelType.GuildText ? fetchedChannel : null;
-}
-
-async function findGuildTextChannelByName(guild, name) {
-  const channels = await guild.channels.fetch().catch(() => null);
-
-  return channels?.find((channel) => channel?.type === ChannelType.GuildText && channel.name === name) ?? null;
-}
-
-async function ensureGuildRecordsChannel(guild, kind, options = {}) {
-  const selectedChannel = options.selectedChannel;
-
-  if (selectedChannel) {
-    if (selectedChannel.type !== ChannelType.GuildText) {
-      throw new Error("Records channels must be standard text channels.");
-    }
-
-    setRecordsChannel(guild.id, kind, selectedChannel.id);
-    return selectedChannel;
-  }
-
-  const configuredChannel = await fetchGuildTextChannel(
-    guild,
-    getGuildConfig(guild.id)[`${kind}RecordsChannelId`],
-  );
-
-  if (configuredChannel) {
-    return configuredChannel;
-  }
-
-  const existingNamedChannel = await findGuildTextChannelByName(guild, getRecordsChannelName(kind));
-  const targetChannel = existingNamedChannel
-    ?? await guild.channels.create({
-      ...buildRecordsChannelCreateOptions(guild, client.user.id, kind),
-      reason: options.reason ?? `Auto-created ${kind} records channel`,
-    });
-
-  setRecordsChannel(guild.id, kind, targetChannel.id);
-  return targetChannel;
-}
-
 async function reconcileGuildRecordsChannels(guild) {
   await withGuildMutationLock(guild.id, async () => {
-    await ensureGuildRecordsChannel(guild, "code", { reason: "Startup reconciliation for code records channel" });
-    await ensureGuildRecordsChannel(guild, "referral", { reason: "Startup reconciliation for referral records channel" });
+    await ensureGuildRecordsChannel(guild, "code", {
+      botUserId: client.user.id,
+      configuredChannelId: getGuildConfig(guild.id).codeRecordsChannelId,
+      reason: "Startup reconciliation for code records channel",
+      setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "code", channelId),
+    });
+    await ensureGuildRecordsChannel(guild, "referral", {
+      botUserId: client.user.id,
+      configuredChannelId: getGuildConfig(guild.id).referralRecordsChannelId,
+      reason: "Startup reconciliation for referral records channel",
+      setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "referral", channelId),
+    });
   });
 }
 
@@ -583,8 +545,11 @@ async function handleSlashCommand(interaction) {
     const targetChannel = await withGuildMutationLock(
       guild.id,
       () => ensureGuildRecordsChannel(guild, "code", {
+        botUserId: client.user.id,
+        configuredChannelId: getGuildConfig(guild.id).codeRecordsChannelId,
         selectedChannel,
         reason: "Auto-created code records channel by /setcoderecordschannel",
+        setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "code", channelId),
       }),
     );
     await interaction.editReply(`${targetChannel} is now the code records channel.`);
@@ -606,8 +571,11 @@ async function handleSlashCommand(interaction) {
     const targetChannel = await withGuildMutationLock(
       guild.id,
       () => ensureGuildRecordsChannel(guild, "referral", {
+        botUserId: client.user.id,
+        configuredChannelId: getGuildConfig(guild.id).referralRecordsChannelId,
         selectedChannel,
         reason: "Auto-created referral records channel by /setreferralrecordschannel",
+        setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "referral", channelId),
       }),
     );
     await interaction.editReply(`${targetChannel} is now the referral records channel.`);

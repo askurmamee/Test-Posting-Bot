@@ -53,14 +53,11 @@ function buildRecordsChannelCreateOptions(guild, botUserId, kind) {
 }
 
 function formatLinkFieldValue(url, label) {
-  const trimmedUrl = truncateForDiscord(url, 2000);
-  const markdownLink = `[${label}](${trimmedUrl})`;
+  const wrapperLength = label.length + 4;
+  const maxUrlLength = MAX_EMBED_FIELD_VALUE_LENGTH - wrapperLength;
+  const truncatedUrl = truncateForDiscord(url, maxUrlLength);
 
-  if (markdownLink.length <= MAX_EMBED_FIELD_VALUE_LENGTH) {
-    return markdownLink;
-  }
-
-  return truncateForDiscord(trimmedUrl, MAX_EMBED_FIELD_VALUE_LENGTH);
+  return `[${label}](${truncatedUrl})`;
 }
 
 function buildRecordMessage(kind, submission, userMention, submittedAt = new Date()) {
@@ -108,9 +105,73 @@ function buildRecordMessage(kind, submission, userMention, submittedAt = new Dat
   return { embeds: [embed] };
 }
 
+function isGuildTextChannel(channel) {
+  return channel?.type === ChannelType.GuildText;
+}
+
+async function fetchGuildChannel(guild, channelId) {
+  if (!channelId) {
+    return null;
+  }
+
+  const cachedChannel = guild.channels.cache.get(channelId);
+
+  if (cachedChannel) {
+    return cachedChannel;
+  }
+
+  return guild.channels.fetch(channelId).catch(() => null);
+}
+
+async function findGuildTextChannelByName(guild, name) {
+  const channels = await guild.channels.fetch().catch(() => null);
+
+  return channels?.find((channel) => isGuildTextChannel(channel) && channel.name === name) ?? null;
+}
+
+async function ensureGuildRecordsChannel(guild, kind, options = {}) {
+  const {
+    botUserId,
+    configuredChannelId,
+    reason,
+    selectedChannel,
+    setConfiguredChannelId,
+  } = options;
+
+  if (selectedChannel) {
+    if (!isGuildTextChannel(selectedChannel)) {
+      throw new Error("Records channels must be standard text channels.");
+    }
+
+    setConfiguredChannelId?.(selectedChannel.id);
+    return selectedChannel;
+  }
+
+  const configuredChannel = await fetchGuildChannel(guild, configuredChannelId);
+
+  if (configuredChannel) {
+    if (!isGuildTextChannel(configuredChannel)) {
+      throw new Error("Configured records channels must remain standard text channels.");
+    }
+
+    return configuredChannel;
+  }
+
+  const existingNamedChannel = await findGuildTextChannelByName(guild, getRecordsChannelName(kind));
+  const targetChannel = existingNamedChannel
+    ?? await guild.channels.create({
+      ...buildRecordsChannelCreateOptions(guild, botUserId, kind),
+      reason: reason ?? `Auto-created ${kind} records channel`,
+    });
+
+  setConfiguredChannelId?.(targetChannel.id);
+  return targetChannel;
+}
+
 module.exports = {
   buildRecordMessage,
   buildRecordsChannelCreateOptions,
+  ensureGuildRecordsChannel,
   getRecordsChannelName,
   truncateForDiscord,
 };
