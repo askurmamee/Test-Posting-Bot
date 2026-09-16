@@ -399,12 +399,11 @@ async function syncGuildSlashCommands(guild) {
   );
 }
 
-async function reconcileGuildRecordsChannels(guild) {
+async function reconcileGuildRecordsChannels(guild, options = {}) {
   await withGuildMutationLock(guild.id, async () => {
     const guildConfig = getGuildConfig(guild.id);
-    const shouldCreateMissingChannels = Boolean(
-      guildConfig.codeRecordsChannelId || guildConfig.referralRecordsChannelId,
-    );
+    const shouldCreateMissingChannels = options.allowCreateMissingChannels
+      ?? Boolean(guildConfig.codeRecordsChannelId || guildConfig.referralRecordsChannelId);
 
     await ensureGuildRecordsChannel(guild, "code", {
       allowCreate: shouldCreateMissingChannels,
@@ -874,7 +873,7 @@ client.once("ready", async () => {
 
 client.on("guildCreate", async (guild) => {
   try {
-    await reconcileGuildRecordsChannels(guild);
+    await reconcileGuildRecordsChannels(guild, { allowCreateMissingChannels: false });
   } catch (error) {
     console.error(`Failed to reconcile records channels for new guild ${guild.id}:`, error);
   }
