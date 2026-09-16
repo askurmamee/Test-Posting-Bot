@@ -763,11 +763,24 @@ async function handleSlashCommand(interaction) {
     const lines = entries.map(([name, config]) => `- /${name} — ${config.description}`);
     const messages = [];
     let current = "";
+    const maxLength = 1900;
 
     for (const line of lines) {
+      if (line.length > maxLength) {
+        if (current) {
+          messages.push(current);
+          current = "";
+        }
+
+        for (let start = 0; start < line.length; start += maxLength) {
+          messages.push(line.slice(start, start + maxLength));
+        }
+        continue;
+      }
+
       const next = current ? `${current}\n${line}` : line;
 
-      if (next.length > 1900) {
+      if (next.length > maxLength) {
         messages.push(current);
         current = line;
       } else {
@@ -777,6 +790,11 @@ async function handleSlashCommand(interaction) {
 
     if (current) {
       messages.push(current);
+    }
+
+    if (messages.length === 0) {
+      await interaction.editReply("No custom commands configured yet.");
+      return;
     }
 
     await interaction.editReply(messages[0]);
