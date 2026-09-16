@@ -419,6 +419,10 @@ async function ensureGuildRecordsChannel(guild, kind, options = {}) {
   const selectedChannel = options.selectedChannel;
 
   if (selectedChannel) {
+    if (selectedChannel.type !== ChannelType.GuildText) {
+      throw new Error("Records channels must be standard text channels.");
+    }
+
     setRecordsChannel(guild.id, kind, selectedChannel.id);
     return selectedChannel;
   }
@@ -882,6 +886,11 @@ client.once("ready", async () => {
 
   try {
     await reconcileAllGuildRecordsChannels();
+  } catch (error) {
+    console.error("Failed to complete startup records channel reconciliation:", error);
+  }
+
+  try {
     await syncAllGuildSlashCommands();
   } catch (error) {
     console.error("Failed to complete startup slash command sync:", error);
@@ -891,6 +900,11 @@ client.once("ready", async () => {
 client.on("guildCreate", async (guild) => {
   try {
     await reconcileGuildRecordsChannels(guild);
+  } catch (error) {
+    console.error(`Failed to reconcile records channels for new guild ${guild.id}:`, error);
+  }
+
+  try {
     await syncGuildSlashCommands(guild);
   } catch (error) {
     console.error(`Failed to sync slash commands for new guild ${guild.id}:`, error);
