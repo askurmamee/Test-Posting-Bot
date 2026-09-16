@@ -28,6 +28,11 @@ const {
   upsertChannel,
 } = require("./store");
 const { formatCommandOutput, runUpdateCommand } = require("./control");
+const {
+  buildRecordMessage,
+  buildRecordsChannelCreateOptions,
+  getRecordsChannelName,
+} = require("./records");
 
 const token = process.env.DISCORD_TOKEN;
 const adminRoleIds = new Set(
@@ -52,7 +57,7 @@ const client = new Client({
   ],
 });
 const rest = new REST({ version: "10" }).setToken(token);
-const guildCustomCommandLocks = new Map();
+const guildMutationLocks = new Map();
 
 const baseCommandNames = new Set([
   "help",
@@ -145,28 +150,14 @@ async function postCode(guild, userMention, currentChannelId, rawDetails) {
   const submission = parseCodeSubmission(rawDetails);
 
   if (!submission) {
-    return { error: "Usage: /code name:<place> code:<CODE> [link]" };
+    return { error: "Please provide a valid place name, a valid code, and an optional http(s) link." };
   }
 
-  const targetChannel = getRecordsChannel(guild, "code");
-
-  if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
-    return { error: "I could not find the code records channel in this server." };
-  }
-
-  const lines = [
-    "**Code Record**",
-    `**Place:** ${submission.name}`,
-    `**Code:** \`${submission.code}\``,
-  ];
-
-  if (submission.link) {
-    lines.push(`**Link:** ${submission.link}`);
-  }
-
-  lines.push(`**Shared by:** ${userMention}`);
-
-  await targetChannel.send(lines.join("\n"));
+  const targetChannel = await withGuildMutationLock(
+    guild.id,
+    () => ensureGuildRecordsChannel(guild, "code", { reason: "Auto-created code records channel for a code submission" }),
+  );
+  await targetChannel.send(buildRecordMessage("code", submission, userMention));
 
   if (targetChannel.id === currentChannelId) {
     return { ok: "Saved that code here." };
@@ -179,28 +170,16 @@ async function postReferral(guild, userMention, currentChannelId, rawDetails) {
   const submission = parseReferralSubmission(rawDetails);
 
   if (!submission) {
-    return { error: "Usage: /referral name:<place> link:<https://...> [description]" };
+    return {
+      error: "Please provide a valid place name, a valid http(s) referral link, and an optional description up to 200 characters.",
+    };
   }
 
-  const targetChannel = getRecordsChannel(guild, "referral");
-
-  if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
-    return { error: "I could not find the referral records channel in this server." };
-  }
-
-  const lines = [
-    "**Referral Record**",
-    `**Place:** ${submission.name}`,
-    `**Link:** ${submission.link}`,
-  ];
-
-  if (submission.description) {
-    lines.push(`**About:** ${submission.description}`);
-  }
-
-  lines.push(`**Shared by:** ${userMention}`);
-
-  await targetChannel.send(lines.join("\n"));
+  const targetChannel = await withGuildMutationLock(
+    guild.id,
+    () => ensureGuildRecordsChannel(guild, "referral", { reason: "Auto-created referral records channel for a referral submission" }),
+  );
+  await targetChannel.send(buildRecordMessage("referral", submission, userMention));
 
   if (targetChannel.id === currentChannelId) {
     return { ok: "Saved that referral here." };
@@ -366,14 +345,14 @@ async function syncAllGuildSlashCommands() {
   await Promise.all(workers);
 }
 
-function withGuildCustomCommandLock(guildId, work) {
-  const current = guildCustomCommandLocks.get(guildId) ?? Promise.resolve();
+function withGuildMutationLock(guildId, work) {
+  const current = guildMutationLocks.get(guildId) ?? Promise.resolve();
   const next = current.catch(() => null).then(work);
-  guildCustomCommandLocks.set(guildId, next);
+  guildMutationLocks.set(guildId, next);
 
   return next.finally(() => {
-    if (guildCustomCommandLocks.get(guildId) === next) {
-      guildCustomCommandLocks.delete(guildId);
+    if (guildMutationLocks.get(guildId) === next) {
+      guildMutationLocks.delete(guildId);
     }
   });
 }
@@ -383,7 +362,7 @@ function buildGuildCommandPayload(guildId) {
   const customCommands = listCustomCommands(guildId);
 
   for (const [name, config] of Object.entries(customCommands)) {
-    if (!customCommandNamePattern.test(name)) {
+    if (!isValidCustomCommandName(name)) {
       continue;
     }
 
@@ -414,42 +393,75 @@ async function syncGuildSlashCommands(guild) {
   );
 }
 
-async function ensureRecordsChannel(interaction, kind) {
-  const selectedChannel = interaction.options.getChannel("channel");
+async function fetchGuildTextChannel(guild, channelId) {
+  if (!channelId) {
+    return null;
+  }
+
+  const cachedChannel = guild.channels.cache.get(channelId);
+
+  if (cachedChannel) {
+    return cachedChannel.type === ChannelType.GuildText ? cachedChannel : null;
+  }
+
+  const fetchedChannel = await guild.channels.fetch(channelId).catch(() => null);
+
+  return fetchedChannel?.type === ChannelType.GuildText ? fetchedChannel : null;
+}
+
+async function findGuildTextChannelByName(guild, name) {
+  const channels = await guild.channels.fetch().catch(() => null);
+
+  return channels?.find((channel) => channel?.type === ChannelType.GuildText && channel.name === name) ?? null;
+}
+
+async function ensureGuildRecordsChannel(guild, kind, options = {}) {
+  const selectedChannel = options.selectedChannel;
 
   if (selectedChannel) {
+    setRecordsChannel(guild.id, kind, selectedChannel.id);
     return selectedChannel;
   }
 
-  const guild = interaction.guild;
-  const channelName = kind === "code" ? "code-records" : "referral-records";
+  const configuredChannel = await fetchGuildTextChannel(
+    guild,
+    getGuildConfig(guild.id)[`${kind}RecordsChannelId`],
+  );
 
-  return guild.channels.create({
-    name: channelName,
-    type: ChannelType.GuildText,
-    permissionOverwrites: [
-      {
-        id: guild.roles.everyone.id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.ReadMessageHistory,
-          PermissionFlagsBits.UseApplicationCommands,
-        ],
-        deny: [PermissionFlagsBits.SendMessages],
-      },
-      {
-        id: client.user.id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.ReadMessageHistory,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.ManageMessages,
-          PermissionFlagsBits.UseApplicationCommands,
-        ],
-      },
-    ],
-    reason: `Auto-created ${kind} records channel by /set${kind}recordschannel`,
+  if (configuredChannel) {
+    return configuredChannel;
+  }
+
+  const existingNamedChannel = await findGuildTextChannelByName(guild, getRecordsChannelName(kind));
+  const targetChannel = existingNamedChannel
+    ?? await guild.channels.create({
+      ...buildRecordsChannelCreateOptions(guild, client.user.id, kind),
+      reason: options.reason ?? `Auto-created ${kind} records channel`,
+    });
+
+  setRecordsChannel(guild.id, kind, targetChannel.id);
+  return targetChannel;
+}
+
+async function reconcileGuildRecordsChannels(guild) {
+  await withGuildMutationLock(guild.id, async () => {
+    await ensureGuildRecordsChannel(guild, "code", { reason: "Startup reconciliation for code records channel" });
+    await ensureGuildRecordsChannel(guild, "referral", { reason: "Startup reconciliation for referral records channel" });
   });
+}
+
+async function reconcileAllGuildRecordsChannels() {
+  const guilds = Array.from(client.guilds.cache.values());
+
+  await Promise.all(
+    guilds.map(async (guild) => {
+      try {
+        await reconcileGuildRecordsChannels(guild);
+      } catch (error) {
+        console.error(`Failed to reconcile records channels for guild ${guild.id}:`, error);
+      }
+    }),
+  );
 }
 
 async function sendUsage(interaction) {
@@ -563,8 +575,14 @@ async function handleSlashCommand(interaction) {
   }
 
   if (commandName === "setcoderecordschannel") {
-    const targetChannel = await ensureRecordsChannel(interaction, "code");
-    setRecordsChannel(guild.id, "code", targetChannel.id);
+    const selectedChannel = interaction.options.getChannel("channel");
+    const targetChannel = await withGuildMutationLock(
+      guild.id,
+      () => ensureGuildRecordsChannel(guild, "code", {
+        selectedChannel,
+        reason: "Auto-created code records channel by /setcoderecordschannel",
+      }),
+    );
     await interaction.editReply(`${targetChannel} is now the code records channel.`);
     return;
   }
@@ -580,8 +598,14 @@ async function handleSlashCommand(interaction) {
   }
 
   if (commandName === "setreferralrecordschannel") {
-    const targetChannel = await ensureRecordsChannel(interaction, "referral");
-    setRecordsChannel(guild.id, "referral", targetChannel.id);
+    const selectedChannel = interaction.options.getChannel("channel");
+    const targetChannel = await withGuildMutationLock(
+      guild.id,
+      () => ensureGuildRecordsChannel(guild, "referral", {
+        selectedChannel,
+        reason: "Auto-created referral records channel by /setreferralrecordschannel",
+      }),
+    );
     await interaction.editReply(`${targetChannel} is now the referral records channel.`);
     return;
   }
@@ -622,7 +646,7 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    const result = await withGuildCustomCommandLock(guild.id, async () => {
+    const result = await withGuildMutationLock(guild.id, async () => {
       if (!addCustomCommand(guild.id, name, description, response)) {
         return { status: "exists" };
       }
@@ -666,17 +690,22 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    if (description && description.trim().length > 100) {
+    const hasDescriptionUpdate = description !== null;
+    const hasResponseUpdate = response !== null;
+    const trimmedDescription = description?.trim();
+    const trimmedResponse = response?.trim();
+
+    if (hasDescriptionUpdate && (!trimmedDescription || trimmedDescription.length > 100)) {
       await interaction.editReply("Description must be 1-100 characters.");
       return;
     }
 
-    if (response && response.trim().length > 2000) {
+    if (hasResponseUpdate && (!trimmedResponse || trimmedResponse.length > 2000)) {
       await interaction.editReply("Response must be 1-2000 characters.");
       return;
     }
 
-    const result = await withGuildCustomCommandLock(guild.id, async () => {
+    const result = await withGuildMutationLock(guild.id, async () => {
       const existingCommand = getCustomCommand(guild.id, name);
 
       if (!existingCommand) {
@@ -684,8 +713,8 @@ async function handleSlashCommand(interaction) {
       }
 
       if (!editCustomCommand(guild.id, name, {
-        description: description?.trim(),
-        response: response?.trim(),
+        description: hasDescriptionUpdate ? trimmedDescription : undefined,
+        response: hasResponseUpdate ? trimmedResponse : undefined,
       })) {
         return { status: "missing" };
       }
@@ -722,7 +751,7 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    const result = await withGuildCustomCommandLock(guild.id, async () => {
+    const result = await withGuildMutationLock(guild.id, async () => {
       const existingCommand = getCustomCommand(guild.id, name);
 
       if (!existingCommand) {
@@ -818,13 +847,12 @@ async function handleSlashCommand(interaction) {
 }
 
 async function moderateCodeOnlyChannel(message) {
-  const codeRecordsChannel = getRecordsChannel(message.guild, "code");
-  const referralRecordsChannel = getRecordsChannel(message.guild, "referral");
   const configuredType = getConfiguredType(message.guild.id, message.channel.id);
+  const guildConfig = getGuildConfig(message.guild.id);
 
   if (
-    codeRecordsChannel?.id === message.channel.id ||
-    referralRecordsChannel?.id === message.channel.id
+    guildConfig.codeRecordsChannelId === message.channel.id ||
+    guildConfig.referralRecordsChannelId === message.channel.id
   ) {
     await message.delete().catch(() => null);
     await sendTemporaryNotice(
@@ -853,6 +881,7 @@ client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   try {
+    await reconcileAllGuildRecordsChannels();
     await syncAllGuildSlashCommands();
   } catch (error) {
     console.error("Failed to complete startup slash command sync:", error);
@@ -861,6 +890,7 @@ client.once("ready", async () => {
 
 client.on("guildCreate", async (guild) => {
   try {
+    await reconcileGuildRecordsChannels(guild);
     await syncGuildSlashCommands(guild);
   } catch (error) {
     console.error(`Failed to sync slash commands for new guild ${guild.id}:`, error);
