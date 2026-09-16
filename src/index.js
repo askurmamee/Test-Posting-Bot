@@ -52,6 +52,7 @@ const client = new Client({
   ],
 });
 const rest = new REST({ version: "10" }).setToken(token);
+const guildCustomCommandLocks = new Map();
 
 const baseCommandNames = new Set([
   "help",
@@ -345,13 +346,36 @@ function isValidCustomCommandName(name) {
 }
 
 async function syncAllGuildSlashCommands() {
-  const syncTasks = Array.from(client.guilds.cache.values(), (guild) =>
-    syncGuildSlashCommands(guild).catch((error) => {
-      console.error(`Failed to sync slash commands for guild ${guild.id}:`, error);
-    }),
-  );
+  const guilds = Array.from(client.guilds.cache.values());
+  const concurrency = Math.min(3, guilds.length);
+  let nextIndex = 0;
 
-  await Promise.all(syncTasks);
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (nextIndex < guilds.length) {
+      const guild = guilds[nextIndex];
+      nextIndex += 1;
+
+      try {
+        await syncGuildSlashCommands(guild);
+      } catch (error) {
+        console.error(`Failed to sync slash commands for guild ${guild.id}:`, error);
+      }
+    }
+  });
+
+  await Promise.all(workers);
+}
+
+function withGuildCustomCommandLock(guildId, work) {
+  const current = guildCustomCommandLocks.get(guildId) ?? Promise.resolve();
+  const next = current.catch(() => null).then(work);
+  guildCustomCommandLocks.set(guildId, next);
+
+  return next.finally(() => {
+    if (guildCustomCommandLocks.get(guildId) === next) {
+      guildCustomCommandLocks.delete(guildId);
+    }
+  });
 }
 
 function buildGuildCommandPayload(guildId) {
@@ -598,18 +622,26 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    if (!addCustomCommand(guild.id, name, description, response)) {
+    const result = await withGuildCustomCommandLock(guild.id, async () => {
+      if (!addCustomCommand(guild.id, name, description, response)) {
+        return { status: "exists" };
+      }
+
+      try {
+        await syncGuildSlashCommands(guild);
+        return { status: "added" };
+      } catch (error) {
+        removeCustomCommand(guild.id, name);
+        throw error;
+      }
+    });
+
+    if (result.status === "exists") {
       await interaction.editReply(`/${name} already exists. Use /editcommand instead.`);
       return;
     }
 
-    try {
-      await syncGuildSlashCommands(guild);
-      await interaction.editReply(`Added /${name}.`);
-    } catch (error) {
-      removeCustomCommand(guild.id, name);
-      throw error;
-    }
+    await interaction.editReply(`Added /${name}.`);
     return;
   }
 
@@ -644,25 +676,35 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    const existingCommand = getCustomCommand(guild.id, name);
+    const result = await withGuildCustomCommandLock(guild.id, async () => {
+      const existingCommand = getCustomCommand(guild.id, name);
 
-    if (!existingCommand) {
+      if (!existingCommand) {
+        return { status: "missing" };
+      }
+
+      if (!editCustomCommand(guild.id, name, {
+        description: description?.trim(),
+        response: response?.trim(),
+      })) {
+        return { status: "missing" };
+      }
+
+      try {
+        await syncGuildSlashCommands(guild);
+        return { status: "updated" };
+      } catch (error) {
+        editCustomCommand(guild.id, name, existingCommand);
+        throw error;
+      }
+    });
+
+    if (result.status === "missing") {
       await interaction.editReply(`/${name} does not exist.`);
       return;
     }
 
-    editCustomCommand(guild.id, name, {
-      description: description?.trim(),
-      response: response?.trim(),
-    });
-
-    try {
-      await syncGuildSlashCommands(guild);
-      await interaction.editReply(`Updated /${name}.`);
-    } catch (error) {
-      editCustomCommand(guild.id, name, existingCommand);
-      throw error;
-    }
+    await interaction.editReply(`Updated /${name}.`);
     return;
   }
 
@@ -680,22 +722,32 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    const existingCommand = getCustomCommand(guild.id, name);
+    const result = await withGuildCustomCommandLock(guild.id, async () => {
+      const existingCommand = getCustomCommand(guild.id, name);
 
-    if (!existingCommand) {
+      if (!existingCommand) {
+        return { status: "missing" };
+      }
+
+      if (!removeCustomCommand(guild.id, name)) {
+        return { status: "missing" };
+      }
+
+      try {
+        await syncGuildSlashCommands(guild);
+        return { status: "removed" };
+      } catch (error) {
+        addCustomCommand(guild.id, name, existingCommand.description, existingCommand.response);
+        throw error;
+      }
+    });
+
+    if (result.status === "missing") {
       await interaction.editReply(`/${name} does not exist.`);
       return;
     }
 
-    removeCustomCommand(guild.id, name);
-
-    try {
-      await syncGuildSlashCommands(guild);
-      await interaction.editReply(`Removed /${name}.`);
-    } catch (error) {
-      addCustomCommand(guild.id, name, existingCommand.description, existingCommand.response);
-      throw error;
-    }
+    await interaction.editReply(`Removed /${name}.`);
     return;
   }
 
@@ -799,7 +851,12 @@ async function moderateCodeOnlyChannel(message) {
 
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
-  await syncAllGuildSlashCommands();
+
+  try {
+    await syncAllGuildSlashCommands();
+  } catch (error) {
+    console.error("Failed to complete startup slash command sync:", error);
+  }
 });
 
 client.on("guildCreate", async (guild) => {
