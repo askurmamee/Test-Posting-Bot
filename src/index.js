@@ -51,6 +51,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+const rest = new REST({ version: "10" }).setToken(token);
 
 const baseCommandNames = new Set([
   "help",
@@ -367,7 +368,6 @@ async function syncGuildSlashCommands(guild) {
     throw new Error("Unable to resolve application id for slash command registration.");
   }
 
-  const rest = new REST({ version: "10" }).setToken(token);
   const body = buildGuildCommandPayload(guild.id);
 
   await rest.put(
@@ -589,15 +589,18 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    const added = addCustomCommand(guild.id, name, description, response);
-
-    if (!added) {
+    if (!addCustomCommand(guild.id, name, description, response)) {
       await interaction.editReply(`/${name} already exists. Use /editcommand instead.`);
       return;
     }
 
-    await syncGuildSlashCommands(guild);
-    await interaction.editReply(`Added /${name}.`);
+    try {
+      await syncGuildSlashCommands(guild);
+      await interaction.editReply(`Added /${name}.`);
+    } catch (error) {
+      removeCustomCommand(guild.id, name);
+      throw error;
+    }
     return;
   }
 
@@ -627,18 +630,25 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    const edited = editCustomCommand(guild.id, name, {
-      description: description?.trim(),
-      response: response?.trim(),
-    });
+    const existingCommand = getCustomCommand(guild.id, name);
 
-    if (!edited) {
+    if (!existingCommand) {
       await interaction.editReply(`/${name} does not exist.`);
       return;
     }
 
-    await syncGuildSlashCommands(guild);
-    await interaction.editReply(`Updated /${name}.`);
+    editCustomCommand(guild.id, name, {
+      description: description?.trim(),
+      response: response?.trim(),
+    });
+
+    try {
+      await syncGuildSlashCommands(guild);
+      await interaction.editReply(`Updated /${name}.`);
+    } catch (error) {
+      editCustomCommand(guild.id, name, existingCommand);
+      throw error;
+    }
     return;
   }
 
@@ -651,15 +661,22 @@ async function handleSlashCommand(interaction) {
     const rawName = interaction.options.getString("name", true);
     const name = sanitizeCustomCommandName(rawName);
 
-    const removed = removeCustomCommand(guild.id, name);
+    const existingCommand = getCustomCommand(guild.id, name);
 
-    if (!removed) {
+    if (!existingCommand) {
       await interaction.editReply(`/${name} does not exist.`);
       return;
     }
 
-    await syncGuildSlashCommands(guild);
-    await interaction.editReply(`Removed /${name}.`);
+    removeCustomCommand(guild.id, name);
+
+    try {
+      await syncGuildSlashCommands(guild);
+      await interaction.editReply(`Removed /${name}.`);
+    } catch (error) {
+      addCustomCommand(guild.id, name, existingCommand.description, existingCommand.response);
+      throw error;
+    }
     return;
   }
 
