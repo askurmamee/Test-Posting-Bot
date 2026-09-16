@@ -5,6 +5,9 @@ const {
   Client,
   GatewayIntentBits,
   PermissionFlagsBits,
+  REST,
+  Routes,
+  SlashCommandBuilder,
 } = require("discord.js");
 
 const {
@@ -13,16 +16,20 @@ const {
   parseReferralSubmission,
 } = require("./codeRules");
 const {
+  addCustomCommand,
   clearRecordsChannel,
+  editCustomCommand,
+  getCustomCommand,
   getGuildConfig,
+  listCustomCommands,
   removeChannel,
+  removeCustomCommand,
   setRecordsChannel,
   upsertChannel,
 } = require("./store");
 const { formatCommandOutput, runUpdateCommand } = require("./control");
 
 const token = process.env.DISCORD_TOKEN;
-const prefix = process.env.BOT_PREFIX?.trim() || "!";
 const adminRoleIds = new Set(
   (process.env.ADMIN_ROLE_IDS || "")
     .split(",")
@@ -30,6 +37,7 @@ const adminRoleIds = new Set(
     .filter(Boolean),
 );
 const shouldRestartAfterUpdate = process.env.RESTART_AFTER_UPDATE === "true";
+const customCommandNamePattern = /^[a-z0-9_-]{1,32}$/;
 
 if (!token) {
   console.error("Missing DISCORD_TOKEN in environment.");
@@ -43,6 +51,25 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+
+const baseCommandNames = new Set([
+  "help",
+  "code",
+  "referral",
+  "codechannels",
+  "setcodechannel",
+  "unsetcodechannel",
+  "setcoderecordschannel",
+  "unsetcoderecordschannel",
+  "setreferralrecordschannel",
+  "unsetreferralrecordschannel",
+  "addcommand",
+  "editcommand",
+  "removecommand",
+  "listcommands",
+  "restartbot",
+  "updatebot",
+]);
 
 function getConfiguredType(guildId, channelId) {
   return getGuildConfig(guildId).channels[channelId]?.type ?? null;
@@ -81,11 +108,6 @@ function listConfiguredChannels(guild) {
   return configured;
 }
 
-function getTargetChannel(message) {
-  const mentionedChannel = message.mentions.channels.first();
-  return mentionedChannel?.guild?.id === message.guild.id ? mentionedChannel : message.channel;
-}
-
 function canManageChannels(member) {
   return Boolean(member?.permissions?.has(PermissionFlagsBits.ManageChannels));
 }
@@ -102,6 +124,10 @@ function canControlBot(member) {
   return Boolean(member.permissions?.has(PermissionFlagsBits.Administrator));
 }
 
+function canManageCustomCommands(member) {
+  return Boolean(member?.permissions?.has(PermissionFlagsBits.Administrator));
+}
+
 async function sendTemporaryNotice(channel, text) {
   await channel
     .send(text)
@@ -113,46 +139,17 @@ async function sendTemporaryNotice(channel, text) {
     .catch(() => null);
 }
 
-async function sendUsage(message) {
-  await message.reply(
-    [
-      "**Member commands**",
-      `- \`${prefix}code Name | CODE | optional-link\``,
-      `- \`${prefix}referral Name | https://link | optional short description\``,
-      "",
-      "**Channel setup commands**",
-      `- \`${prefix}setcodechannel [#channel]\``,
-      `- \`${prefix}unsetcodechannel [#channel]\``,
-      `- \`${prefix}setcoderecordschannel [#channel]\``,
-      `- \`${prefix}unsetcoderecordschannel\``,
-      `- \`${prefix}setreferralrecordschannel [#channel]\``,
-      `- \`${prefix}unsetreferralrecordschannel\``,
-      `- \`${prefix}codechannels\``,
-      "",
-      "**Admin bot commands**",
-      `- \`${prefix}restartbot\``,
-      `- \`${prefix}updatebot\``,
-    ].join("\n"),
-  );
-}
-
-async function postCode(message, rawDetails) {
+async function postCode(guild, userMention, currentChannelId, rawDetails) {
   const submission = parseCodeSubmission(rawDetails);
 
   if (!submission) {
-    await message.reply(
-      `Usage: \`${prefix}code Name | CODE | optional-link\``,
-    );
-    return;
+    return { error: "Usage: /code name:<place> code:<CODE> [link]" };
   }
 
-  const targetChannel = getRecordsChannel(message.guild, "code");
+  const targetChannel = getRecordsChannel(guild, "code");
 
   if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
-    await message.reply(
-      "I could not find the code records channel in this server.",
-    );
-    return;
+    return { error: "I could not find the code records channel in this server." };
   }
 
   const lines = [
@@ -165,34 +162,28 @@ async function postCode(message, rawDetails) {
     lines.push(`**Link:** ${submission.link}`);
   }
 
-  lines.push(`**Shared by:** ${message.author}`);
+  lines.push(`**Shared by:** ${userMention}`);
 
   await targetChannel.send(lines.join("\n"));
 
-  if (targetChannel.id === message.channel.id) {
-    await message.delete().catch(() => null);
-  } else {
-    await message.reply(`Saved that code in ${targetChannel}.`);
+  if (targetChannel.id === currentChannelId) {
+    return { ok: "Saved that code here." };
   }
+
+  return { ok: `Saved that code in ${targetChannel}.` };
 }
 
-async function postReferral(message, rawDetails) {
+async function postReferral(guild, userMention, currentChannelId, rawDetails) {
   const submission = parseReferralSubmission(rawDetails);
 
   if (!submission) {
-    await message.reply(
-      `Usage: \`${prefix}referral Name | https://link | optional short description\``,
-    );
-    return;
+    return { error: "Usage: /referral name:<place> link:<https://...> [description]" };
   }
 
-  const targetChannel = getRecordsChannel(message.guild, "referral");
+  const targetChannel = getRecordsChannel(guild, "referral");
 
   if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
-    await message.reply(
-      "I could not find the referral records channel in this server.",
-    );
-    return;
+    return { error: "I could not find the referral records channel in this server." };
   }
 
   const lines = [
@@ -205,19 +196,19 @@ async function postReferral(message, rawDetails) {
     lines.push(`**About:** ${submission.description}`);
   }
 
-  lines.push(`**Shared by:** ${message.author}`);
+  lines.push(`**Shared by:** ${userMention}`);
 
   await targetChannel.send(lines.join("\n"));
 
-  if (targetChannel.id === message.channel.id) {
-    await message.delete().catch(() => null);
-  } else {
-    await message.reply(`Saved that referral in ${targetChannel}.`);
+  if (targetChannel.id === currentChannelId) {
+    return { ok: "Saved that referral here." };
   }
+
+  return { ok: `Saved that referral in ${targetChannel}.` };
 }
 
-async function restartBot(message) {
-  await message.reply("Restarting the bot now.");
+async function restartBot(interaction) {
+  await interaction.editReply("Restarting the bot now.");
   scheduleRestart();
 }
 
@@ -228,81 +219,270 @@ function scheduleRestart() {
   }, 1000);
 }
 
-async function updateBot(message) {
+async function updateBot(interaction) {
   const updateCommand = process.env.UPDATE_COMMAND?.trim();
 
   if (!updateCommand) {
-    await message.reply("Set UPDATE_COMMAND in the bot environment before using this command.");
+    await interaction.editReply("Set UPDATE_COMMAND in the bot environment before using this command.");
     return;
   }
 
-  await message.reply(`Running update command:\n\`\`\`\n${updateCommand}\n\`\`\``);
+  await interaction.editReply(`Running update command:\n\`\`\`\n${updateCommand}\n\`\`\``);
 
   try {
     const { stdout, stderr } = await runUpdateCommand(updateCommand);
     const output = formatCommandOutput(stdout, stderr);
 
     if (shouldRestartAfterUpdate) {
-      await message.reply(`Update finished. Restarting the bot now.\n\`\`\`\n${output}\n\`\`\``);
+      await interaction.followUp(`Update finished. Restarting the bot now.\n\`\`\`\n${output}\n\`\`\``);
       scheduleRestart();
       return;
     }
 
-    await message.reply(`Update finished.\n\`\`\`\n${output}\n\`\`\``);
+    await interaction.followUp(`Update finished.\n\`\`\`\n${output}\n\`\`\``);
   } catch (result) {
     const output = formatCommandOutput(result.stdout, result.stderr || result.error?.message);
-    await message.reply(`Update failed.\n\`\`\`\n${output}\n\`\`\``);
+    await interaction.followUp(`Update failed.\n\`\`\`\n${output}\n\`\`\``);
   }
 }
 
-async function handleCommand(message) {
-  const withoutPrefix = message.content.slice(prefix.length).trim();
+function buildBaseCommands() {
+  return [
+    new SlashCommandBuilder()
+      .setName("help")
+      .setDescription("Show all available bot commands"),
+    new SlashCommandBuilder()
+      .setName("code")
+      .setDescription("Submit a code record")
+      .addStringOption((option) => option.setName("name").setDescription("Place name").setRequired(true))
+      .addStringOption((option) => option.setName("code").setDescription("Code token").setRequired(true))
+      .addStringOption((option) => option.setName("link").setDescription("Optional link").setRequired(false)),
+    new SlashCommandBuilder()
+      .setName("referral")
+      .setDescription("Submit a referral record")
+      .addStringOption((option) => option.setName("name").setDescription("Place name").setRequired(true))
+      .addStringOption((option) => option.setName("link").setDescription("Referral link").setRequired(true))
+      .addStringOption((option) => option.setName("description").setDescription("Optional short description").setRequired(false)),
+    new SlashCommandBuilder()
+      .setName("setcodechannel")
+      .setDescription("Mark a channel as code-only")
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+      .addChannelOption((option) =>
+        option.setName("channel").setDescription("Channel to mark as code-only").addChannelTypes(ChannelType.GuildText).setRequired(false),
+      ),
+    new SlashCommandBuilder()
+      .setName("unsetcodechannel")
+      .setDescription("Remove code-only rules from a channel")
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+      .addChannelOption((option) =>
+        option.setName("channel").setDescription("Channel to unmark (defaults to current)").addChannelTypes(ChannelType.GuildText).setRequired(false),
+      ),
+    new SlashCommandBuilder()
+      .setName("setcoderecordschannel")
+      .setDescription("Set channel for code records (or auto-create one)")
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+      .addChannelOption((option) =>
+        option.setName("channel").setDescription("Existing records channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+      ),
+    new SlashCommandBuilder()
+      .setName("unsetcoderecordschannel")
+      .setDescription("Clear code records channel")
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+    new SlashCommandBuilder()
+      .setName("setreferralrecordschannel")
+      .setDescription("Set channel for referral records (or auto-create one)")
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+      .addChannelOption((option) =>
+        option.setName("channel").setDescription("Existing records channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+      ),
+    new SlashCommandBuilder()
+      .setName("unsetreferralrecordschannel")
+      .setDescription("Clear referral records channel")
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+    new SlashCommandBuilder()
+      .setName("codechannels")
+      .setDescription("List configured code and records channels"),
+    new SlashCommandBuilder()
+      .setName("addcommand")
+      .setDescription("Create a custom slash command")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addStringOption((option) => option.setName("name").setDescription("Command name (letters, numbers, _ or -)").setRequired(true))
+      .addStringOption((option) => option.setName("description").setDescription("Short command description").setRequired(true))
+      .addStringOption((option) => option.setName("response").setDescription("Message response for the command").setRequired(true)),
+    new SlashCommandBuilder()
+      .setName("editcommand")
+      .setDescription("Edit an existing custom slash command")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addStringOption((option) => option.setName("name").setDescription("Existing command name").setRequired(true))
+      .addStringOption((option) => option.setName("description").setDescription("New command description").setRequired(false))
+      .addStringOption((option) => option.setName("response").setDescription("New command response").setRequired(false)),
+    new SlashCommandBuilder()
+      .setName("removecommand")
+      .setDescription("Remove a custom slash command")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addStringOption((option) => option.setName("name").setDescription("Custom command name").setRequired(true)),
+    new SlashCommandBuilder()
+      .setName("listcommands")
+      .setDescription("List all custom commands"),
+    new SlashCommandBuilder()
+      .setName("restartbot")
+      .setDescription("Restart the bot process")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    new SlashCommandBuilder()
+      .setName("updatebot")
+      .setDescription("Run the configured update command")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  ];
+}
 
-  if (!withoutPrefix) {
-    return;
-  }
+function sanitizeCustomCommandName(name) {
+  return name.trim().toLowerCase();
+}
 
-  const [commandName, ...args] = withoutPrefix.split(/\s+/);
-  const command = commandName.toLowerCase();
+function buildGuildCommandPayload(guildId) {
+  const baseCommands = buildBaseCommands();
+  const customCommands = listCustomCommands(guildId);
 
-  if (command === "help") {
-    await sendUsage(message);
-    return;
-  }
-
-  if (
-    command === "code"
-  ) {
-    const details = withoutPrefix.slice(commandName.length).trim();
-
-    if (!details) {
-      await message.reply(
-        `Usage: \`${prefix}code Name | CODE | optional-link\``,
-      );
-      return;
+  for (const [name, config] of Object.entries(customCommands)) {
+    if (!customCommandNamePattern.test(name)) {
+      continue;
     }
 
-    await postCode(message, details);
+    const description = (config?.description || "Custom bot command").trim();
+
+    baseCommands.push(
+      new SlashCommandBuilder()
+        .setName(name)
+        .setDescription(description.slice(0, 100) || "Custom bot command"),
+    );
+  }
+
+  return baseCommands.map((command) => command.toJSON());
+}
+
+async function syncGuildSlashCommands(guild) {
+  const applicationId = client.application?.id ?? client.user?.id;
+
+  if (!applicationId) {
+    throw new Error("Unable to resolve application id for slash command registration.");
+  }
+
+  const rest = new REST({ version: "10" }).setToken(token);
+  const body = buildGuildCommandPayload(guild.id);
+
+  await rest.put(
+    Routes.applicationGuildCommands(applicationId, guild.id),
+    { body },
+  );
+}
+
+async function ensureRecordsChannel(interaction, kind) {
+  const selectedChannel = interaction.options.getChannel("channel");
+
+  if (selectedChannel) {
+    return selectedChannel;
+  }
+
+  const guild = interaction.guild;
+  const channelName = kind === "code" ? "code-records" : "referral-records";
+
+  return guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    permissionOverwrites: [
+      {
+        id: guild.roles.everyone.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.UseApplicationCommands,
+        ],
+        deny: [PermissionFlagsBits.SendMessages],
+      },
+      {
+        id: client.user.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ManageMessages,
+          PermissionFlagsBits.UseApplicationCommands,
+        ],
+      },
+    ],
+    reason: `Auto-created ${kind} records channel by /set${kind}recordschannel`,
+  });
+}
+
+async function sendUsage(interaction) {
+  await interaction.editReply(
+    [
+      "**Member commands**",
+      "- `/code name:<place> code:<CODE> [link]`",
+      "- `/referral name:<place> link:<https://...> [description]`",
+      "",
+      "**Channel setup commands**",
+      "- `/setcodechannel [channel]`",
+      "- `/unsetcodechannel [channel]`",
+      "- `/setcoderecordschannel [channel]`",
+      "- `/unsetcoderecordschannel`",
+      "- `/setreferralrecordschannel [channel]`",
+      "- `/unsetreferralrecordschannel`",
+      "- `/codechannels`",
+      "",
+      "**Dynamic custom command management**",
+      "- `/addcommand name description response`",
+      "- `/editcommand name [description] [response]`",
+      "- `/removecommand name`",
+      "- `/listcommands`",
+      "",
+      "**Admin bot commands**",
+      "- `/restartbot`",
+      "- `/updatebot`",
+    ].join("\n"),
+  );
+}
+
+async function handleSlashCommand(interaction) {
+  const { guild, member, commandName } = interaction;
+
+  if (!guild) {
+    await interaction.reply({ content: "This command can only be used inside a server.", ephemeral: true });
     return;
   }
 
-  if (command === "referral") {
-    const details = withoutPrefix.slice(commandName.length).trim();
+  await interaction.deferReply({ ephemeral: true });
 
-    if (!details) {
-      await message.reply(
-        `Usage: \`${prefix}referral Name | https://link | optional short description\``,
-      );
-      return;
-    }
-
-    await postReferral(message, details);
+  if (commandName === "help") {
+    await sendUsage(interaction);
     return;
   }
 
-  if (command === "codechannels") {
-    const configured = listConfiguredChannels(message.guild);
-    await message.reply(
+  if (commandName === "code") {
+    const name = interaction.options.getString("name", true);
+    const code = interaction.options.getString("code", true);
+    const link = interaction.options.getString("link") ?? "";
+    const details = [name, code, link].filter(Boolean).join(" | ");
+    const result = await postCode(guild, interaction.user.toString(), interaction.channelId, details);
+
+    await interaction.editReply(result.error ?? result.ok);
+    return;
+  }
+
+  if (commandName === "referral") {
+    const name = interaction.options.getString("name", true);
+    const link = interaction.options.getString("link", true);
+    const description = interaction.options.getString("description") ?? "";
+    const details = [name, link, description].filter(Boolean).join(" | ");
+    const result = await postReferral(guild, interaction.user.toString(), interaction.channelId, details);
+
+    await interaction.editReply(result.error ?? result.ok);
+    return;
+  }
+
+  if (commandName === "codechannels") {
+    const configured = listConfiguredChannels(guild);
+    await interaction.editReply(
       configured.length > 0
         ? configured.join("\n")
         : "No code or records channels are configured yet.",
@@ -311,32 +491,32 @@ async function handleCommand(message) {
   }
 
   if (
-    command === "setcodechannel" ||
-    command === "unsetcodechannel" ||
-    command === "setcoderecordschannel" ||
-    command === "unsetcoderecordschannel" ||
-    command === "setreferralrecordschannel" ||
-    command === "unsetreferralrecordschannel"
+    commandName === "setcodechannel" ||
+    commandName === "unsetcodechannel" ||
+    commandName === "setcoderecordschannel" ||
+    commandName === "unsetcoderecordschannel" ||
+    commandName === "setreferralrecordschannel" ||
+    commandName === "unsetreferralrecordschannel"
   ) {
-    if (!canManageChannels(message.member)) {
-      await message.reply("You need the Manage Channels permission to change channel rules.");
+    if (!canManageChannels(member)) {
+      await interaction.editReply("You need the Manage Channels permission to change channel rules.");
       return;
     }
   }
 
-  if (command === "setcodechannel") {
-    const targetChannel = getTargetChannel(message);
+  if (commandName === "setcodechannel") {
+    const targetChannel = interaction.options.getChannel("channel") ?? interaction.channel;
 
-    upsertChannel(message.guild.id, targetChannel.id, "code");
-    await message.reply(`${targetChannel} is now a code-only channel.`);
+    upsertChannel(guild.id, targetChannel.id, "code");
+    await interaction.editReply(`${targetChannel} is now a code-only channel.`);
     return;
   }
 
-  if (command === "unsetcodechannel") {
-    const targetChannel = getTargetChannel(message);
-    const removed = removeChannel(message.guild.id, targetChannel.id);
+  if (commandName === "unsetcodechannel") {
+    const targetChannel = interaction.options.getChannel("channel") ?? interaction.channel;
+    const removed = removeChannel(guild.id, targetChannel.id);
 
-    await message.reply(
+    await interaction.editReply(
       removed
         ? `${targetChannel} is no longer code-only.`
         : `${targetChannel} was not configured as a code-only channel.`,
@@ -344,16 +524,16 @@ async function handleCommand(message) {
     return;
   }
 
-  if (command === "setcoderecordschannel") {
-    const targetChannel = getTargetChannel(message);
-    setRecordsChannel(message.guild.id, "code", targetChannel.id);
-    await message.reply(`${targetChannel} is now the code records channel.`);
+  if (commandName === "setcoderecordschannel") {
+    const targetChannel = await ensureRecordsChannel(interaction, "code");
+    setRecordsChannel(guild.id, "code", targetChannel.id);
+    await interaction.editReply(`${targetChannel} is now the code records channel.`);
     return;
   }
 
-  if (command === "unsetcoderecordschannel") {
-    const removed = clearRecordsChannel(message.guild.id, "code");
-    await message.reply(
+  if (commandName === "unsetcoderecordschannel") {
+    const removed = clearRecordsChannel(guild.id, "code");
+    await interaction.editReply(
       removed
         ? "The code records channel has been cleared."
         : "There is no code records channel configured right now.",
@@ -361,16 +541,16 @@ async function handleCommand(message) {
     return;
   }
 
-  if (command === "setreferralrecordschannel") {
-    const targetChannel = getTargetChannel(message);
-    setRecordsChannel(message.guild.id, "referral", targetChannel.id);
-    await message.reply(`${targetChannel} is now the referral records channel.`);
+  if (commandName === "setreferralrecordschannel") {
+    const targetChannel = await ensureRecordsChannel(interaction, "referral");
+    setRecordsChannel(guild.id, "referral", targetChannel.id);
+    await interaction.editReply(`${targetChannel} is now the referral records channel.`);
     return;
   }
 
-  if (command === "unsetreferralrecordschannel") {
-    const removed = clearRecordsChannel(message.guild.id, "referral");
-    await message.reply(
+  if (commandName === "unsetreferralrecordschannel") {
+    const removed = clearRecordsChannel(guild.id, "referral");
+    await interaction.editReply(
       removed
         ? "The referral records channel has been cleared."
         : "There is no referral records channel configured right now.",
@@ -378,37 +558,162 @@ async function handleCommand(message) {
     return;
   }
 
-  if (command === "restartbot" || command === "restart") {
-    if (!canControlBot(message.member)) {
-      await message.reply("You need the configured bot admin role or Administrator permission to restart the bot.");
+  if (commandName === "addcommand") {
+    if (!canManageCustomCommands(member)) {
+      await interaction.editReply("Only administrators can add custom commands.");
       return;
     }
 
-    await restartBot(message);
-    return;
-  }
+    const rawName = interaction.options.getString("name", true);
+    const description = interaction.options.getString("description", true).trim();
+    const response = interaction.options.getString("response", true).trim();
+    const name = sanitizeCustomCommandName(rawName);
 
-  if (command === "updatebot" || command === "update") {
-    if (!canControlBot(message.member)) {
-      await message.reply("You need the configured bot admin role or Administrator permission to update the bot.");
+    if (!customCommandNamePattern.test(name)) {
+      await interaction.editReply("Command name must be 1-32 chars using lowercase letters, numbers, `_`, or `-`.");
       return;
     }
 
-    await updateBot(message);
+    if (baseCommandNames.has(name)) {
+      await interaction.editReply("That command name is reserved by the bot.");
+      return;
+    }
+
+    if (!description || description.length > 100) {
+      await interaction.editReply("Description is required and must be 1-100 characters.");
+      return;
+    }
+
+    if (!response || response.length > 2000) {
+      await interaction.editReply("Response is required and must be 1-2000 characters.");
+      return;
+    }
+
+    const added = addCustomCommand(guild.id, name, description, response);
+
+    if (!added) {
+      await interaction.editReply(`/${name} already exists. Use /editcommand instead.`);
+      return;
+    }
+
+    await syncGuildSlashCommands(guild);
+    await interaction.editReply(`Added /${name}.`);
     return;
   }
 
-  await message.reply(`Unknown command. Use \`${prefix}help\` for the command list.`);
+  if (commandName === "editcommand") {
+    if (!canManageCustomCommands(member)) {
+      await interaction.editReply("Only administrators can edit custom commands.");
+      return;
+    }
+
+    const rawName = interaction.options.getString("name", true);
+    const description = interaction.options.getString("description");
+    const response = interaction.options.getString("response");
+    const name = sanitizeCustomCommandName(rawName);
+
+    if (!description && !response) {
+      await interaction.editReply("Provide at least one field to update: description or response.");
+      return;
+    }
+
+    if (description && description.trim().length > 100) {
+      await interaction.editReply("Description must be 1-100 characters.");
+      return;
+    }
+
+    if (response && response.trim().length > 2000) {
+      await interaction.editReply("Response must be 1-2000 characters.");
+      return;
+    }
+
+    const edited = editCustomCommand(guild.id, name, {
+      description: description?.trim(),
+      response: response?.trim(),
+    });
+
+    if (!edited) {
+      await interaction.editReply(`/${name} does not exist.`);
+      return;
+    }
+
+    await syncGuildSlashCommands(guild);
+    await interaction.editReply(`Updated /${name}.`);
+    return;
+  }
+
+  if (commandName === "removecommand") {
+    if (!canManageCustomCommands(member)) {
+      await interaction.editReply("Only administrators can remove custom commands.");
+      return;
+    }
+
+    const rawName = interaction.options.getString("name", true);
+    const name = sanitizeCustomCommandName(rawName);
+
+    const removed = removeCustomCommand(guild.id, name);
+
+    if (!removed) {
+      await interaction.editReply(`/${name} does not exist.`);
+      return;
+    }
+
+    await syncGuildSlashCommands(guild);
+    await interaction.editReply(`Removed /${name}.`);
+    return;
+  }
+
+  if (commandName === "listcommands") {
+    const commands = listCustomCommands(guild.id);
+    const entries = Object.entries(commands);
+
+    if (entries.length === 0) {
+      await interaction.editReply("No custom commands configured yet.");
+      return;
+    }
+
+    await interaction.editReply(
+      entries
+        .map(([name, config]) => `- /${name} — ${config.description}`)
+        .join("\n"),
+    );
+    return;
+  }
+
+  if (commandName === "restartbot") {
+    if (!canControlBot(member)) {
+      await interaction.editReply("You need the configured bot admin role or Administrator permission to restart the bot.");
+      return;
+    }
+
+    await restartBot(interaction);
+    return;
+  }
+
+  if (commandName === "updatebot") {
+    if (!canControlBot(member)) {
+      await interaction.editReply("You need the configured bot admin role or Administrator permission to update the bot.");
+      return;
+    }
+
+    await updateBot(interaction);
+    return;
+  }
+
+  const customCommand = getCustomCommand(guild.id, commandName);
+
+  if (customCommand) {
+    await interaction.editReply(customCommand.response);
+    return;
+  }
+
+  await interaction.editReply("Unknown command.");
 }
 
 async function moderateCodeOnlyChannel(message) {
   const codeRecordsChannel = getRecordsChannel(message.guild, "code");
   const referralRecordsChannel = getRecordsChannel(message.guild, "referral");
   const configuredType = getConfiguredType(message.guild.id, message.channel.id);
-
-  if (message.content.startsWith(prefix)) {
-    return;
-  }
 
   if (
     codeRecordsChannel?.id === message.channel.id ||
@@ -437,8 +742,51 @@ async function moderateCodeOnlyChannel(message) {
   );
 }
 
-client.once("ready", () => {
+client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      await syncGuildSlashCommands(guild);
+    } catch (error) {
+      console.error(`Failed to sync slash commands for guild ${guild.id}:`, error);
+    }
+  }
+});
+
+client.on("guildCreate", async (guild) => {
+  try {
+    await syncGuildSlashCommands(guild);
+  } catch (error) {
+    console.error(`Failed to sync slash commands for new guild ${guild.id}:`, error);
+  }
+});
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) {
+    return;
+  }
+
+  await handleSlashCommand(interaction).catch(async (error) => {
+    console.error("Command failed:", error);
+
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply("Something went wrong while running that command.").catch(() => null);
+      return;
+    }
+
+    await interaction.reply({ content: "Something went wrong while running that command.", ephemeral: true }).catch(() => null);
+  });
+});
+
+client.on("messageCreate", async (message) => {
+  if (message.author.bot || !message.guild) {
+    return;
+  }
+
+  await moderateCodeOnlyChannel(message).catch((error) => {
+    console.error("Moderation failed:", error);
+  });
 });
 
 client.on("error", (error) => {
@@ -452,24 +800,6 @@ process.on("unhandledRejection", (error) => {
 process.on("uncaughtException", (error) => {
   console.error("Uncaught exception:", error);
   process.exit(1);
-});
-
-client.on("messageCreate", async (message) => {
-  if (message.author.bot || !message.guild) {
-    return;
-  }
-
-  if (message.content.startsWith(prefix)) {
-    await handleCommand(message).catch((error) => {
-      console.error("Command failed:", error);
-      return message.reply("Something went wrong while running that command.");
-    });
-    return;
-  }
-
-  await moderateCodeOnlyChannel(message).catch((error) => {
-    console.error("Moderation failed:", error);
-  });
 });
 
 client.login(token).catch((error) => {

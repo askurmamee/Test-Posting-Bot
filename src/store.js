@@ -64,6 +64,7 @@ function getGuildConfig(guildId) {
       channels: {},
       codeRecordsChannelId: null,
       referralRecordsChannelId: null,
+      customCommands: {},
     };
   }
 
@@ -71,6 +72,10 @@ function getGuildConfig(guildId) {
     channels: guildConfig.channels ?? {},
     codeRecordsChannelId: guildConfig.codeRecordsChannelId ?? guildConfig.recordsChannelId ?? null,
     referralRecordsChannelId: guildConfig.referralRecordsChannelId ?? null,
+    customCommands:
+      guildConfig.customCommands && typeof guildConfig.customCommands === "object"
+        ? guildConfig.customCommands
+        : {},
   };
 }
 
@@ -80,6 +85,7 @@ function upsertChannel(guildId, channelId, type) {
     channels: {},
     codeRecordsChannelId: null,
     referralRecordsChannelId: null,
+    customCommands: {},
   };
   store.guilds[guildId].channels[channelId] = { type };
   writeStore(store);
@@ -108,6 +114,7 @@ function setRecordsChannel(guildId, recordType, channelId) {
     channels: {},
     codeRecordsChannelId: null,
     referralRecordsChannelId: null,
+    customCommands: {},
   };
   store.guilds[guildId][`${recordType}RecordsChannelId`] = channelId;
   writeStore(store);
@@ -132,10 +139,75 @@ function clearRecordsChannel(guildId, recordType) {
   return true;
 }
 
+function addCustomCommand(guildId, name, description, response) {
+  const store = readStore();
+  store.guilds[guildId] ??= {
+    channels: {},
+    codeRecordsChannelId: null,
+    referralRecordsChannelId: null,
+    customCommands: {},
+  };
+  store.guilds[guildId].customCommands ??= {};
+
+  if (store.guilds[guildId].customCommands[name]) {
+    return false;
+  }
+
+  store.guilds[guildId].customCommands[name] = {
+    description,
+    response,
+  };
+  writeStore(store);
+  return true;
+}
+
+function editCustomCommand(guildId, name, updates) {
+  const store = readStore();
+  const command = store.guilds[guildId]?.customCommands?.[name];
+
+  if (!command) {
+    return false;
+  }
+
+  const nextDescription = updates.description ?? command.description;
+  const nextResponse = updates.response ?? command.response;
+  store.guilds[guildId].customCommands[name] = {
+    description: nextDescription,
+    response: nextResponse,
+  };
+  writeStore(store);
+  return true;
+}
+
+function removeCustomCommand(guildId, name) {
+  const store = readStore();
+
+  if (!store.guilds[guildId]?.customCommands?.[name]) {
+    return false;
+  }
+
+  delete store.guilds[guildId].customCommands[name];
+  writeStore(store);
+  return true;
+}
+
+function listCustomCommands(guildId) {
+  return getGuildConfig(guildId).customCommands;
+}
+
+function getCustomCommand(guildId, name) {
+  return getGuildConfig(guildId).customCommands[name] ?? null;
+}
+
 module.exports = {
+  addCustomCommand,
   clearRecordsChannel,
+  editCustomCommand,
+  getCustomCommand,
   getGuildConfig,
+  listCustomCommands,
   removeChannel,
+  removeCustomCommand,
   setRecordsChannel,
   upsertChannel,
 };

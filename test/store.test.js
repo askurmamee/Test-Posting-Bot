@@ -32,6 +32,7 @@ test("store recovers from invalid json without throwing", () => {
     channels: {},
     codeRecordsChannelId: null,
     referralRecordsChannelId: null,
+    customCommands: {},
   });
 
   const repairedStore = JSON.parse(fs.readFileSync(storePath, "utf8"));
@@ -49,6 +50,7 @@ test("store normalizes malformed but parseable content", () => {
     channels: {},
     codeRecordsChannelId: null,
     referralRecordsChannelId: null,
+    customCommands: {},
   });
 
   fs.writeFileSync(storePath, "[]");
@@ -56,6 +58,7 @@ test("store normalizes malformed but parseable content", () => {
     channels: {},
     codeRecordsChannelId: null,
     referralRecordsChannelId: null,
+    customCommands: {},
   });
 });
 
@@ -72,5 +75,51 @@ test("store writes and reads guild channel configuration", () => {
     },
     codeRecordsChannelId: "records-1",
     referralRecordsChannelId: null,
+    customCommands: {},
   });
+});
+
+test("store supports add, edit, list and remove custom commands", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "posting-bot-store-"));
+  const {
+    addCustomCommand,
+    editCustomCommand,
+    getCustomCommand,
+    listCustomCommands,
+    removeCustomCommand,
+  } = loadStoreModule(tempDir);
+
+  assert.equal(
+    addCustomCommand("guild-1", "hello", "Say hello", "Hello world"),
+    true,
+  );
+  assert.equal(
+    addCustomCommand("guild-1", "hello", "Say hello", "Duplicate"),
+    false,
+  );
+
+  assert.deepEqual(getCustomCommand("guild-1", "hello"), {
+    description: "Say hello",
+    response: "Hello world",
+  });
+  assert.deepEqual(listCustomCommands("guild-1"), {
+    hello: {
+      description: "Say hello",
+      response: "Hello world",
+    },
+  });
+
+  assert.equal(
+    editCustomCommand("guild-1", "hello", { response: "Updated response" }),
+    true,
+  );
+  assert.deepEqual(getCustomCommand("guild-1", "hello"), {
+    description: "Say hello",
+    response: "Updated response",
+  });
+
+  assert.equal(editCustomCommand("guild-1", "missing", { response: "x" }), false);
+  assert.equal(removeCustomCommand("guild-1", "hello"), true);
+  assert.equal(removeCustomCommand("guild-1", "hello"), false);
+  assert.equal(getCustomCommand("guild-1", "hello"), null);
 });
