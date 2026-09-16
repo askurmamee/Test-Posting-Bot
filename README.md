@@ -33,7 +33,7 @@ Discord bot for keeping code channels clean and sending code or referral submiss
 
 If a protected channel is configured, members can also post a bare code directly as long as it is a single token made of letters, numbers, `_`, or `-`.
 
-All `/code` and `/referral` submissions can be run in any channel. The bot sends each one into the correct configured records channel, and missing records channels are recreated automatically on startup or submission.
+All `/code` and `/referral` submissions can be run in any channel. The bot sends each one into the correct configured records channel; missing records channels are recreated on submission, and startup only auto-creates them for servers that already had records-channel configuration (otherwise it only reuses existing `code-records` / `referral-records` channels by name).
 
 ## Setup
 

@@ -149,15 +149,26 @@ async function postCode(guild, userMention, currentChannelId, rawDetails) {
     return { error: "Please provide a valid place name, a valid code, and an optional http(s) link." };
   }
 
-  const targetChannel = await withGuildMutationLock(
-    guild.id,
-    () => ensureGuildRecordsChannel(guild, "code", {
-      botUserId: client.user.id,
-      configuredChannelId: getGuildConfig(guild.id).codeRecordsChannelId,
-      reason: "Auto-created code records channel for a code submission",
-      setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "code", channelId),
-    }),
-  );
+  let targetChannel;
+
+  try {
+    targetChannel = await withGuildMutationLock(
+      guild.id,
+      () => ensureGuildRecordsChannel(guild, "code", {
+        botUserId: client.user.id,
+        configuredChannelId: getGuildConfig(guild.id).codeRecordsChannelId,
+        reason: "Auto-created code records channel for a code submission",
+        setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "code", channelId),
+      }),
+    );
+  } catch (error) {
+    console.error(`Failed to prepare code records channel for guild ${guild.id}:`, error);
+    return {
+      error:
+        "I couldn't prepare the code records channel. Ask a moderator to run /setcoderecordschannel and make sure it points to a standard text channel.",
+    };
+  }
+
   await targetChannel.send(buildRecordMessage("code", submission, userMention));
 
   if (targetChannel.id === currentChannelId) {
@@ -176,15 +187,26 @@ async function postReferral(guild, userMention, currentChannelId, rawDetails) {
     };
   }
 
-  const targetChannel = await withGuildMutationLock(
-    guild.id,
-    () => ensureGuildRecordsChannel(guild, "referral", {
-      botUserId: client.user.id,
-      configuredChannelId: getGuildConfig(guild.id).referralRecordsChannelId,
-      reason: "Auto-created referral records channel for a referral submission",
-      setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "referral", channelId),
-    }),
-  );
+  let targetChannel;
+
+  try {
+    targetChannel = await withGuildMutationLock(
+      guild.id,
+      () => ensureGuildRecordsChannel(guild, "referral", {
+        botUserId: client.user.id,
+        configuredChannelId: getGuildConfig(guild.id).referralRecordsChannelId,
+        reason: "Auto-created referral records channel for a referral submission",
+        setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "referral", channelId),
+      }),
+    );
+  } catch (error) {
+    console.error(`Failed to prepare referral records channel for guild ${guild.id}:`, error);
+    return {
+      error:
+        "I couldn't prepare the referral records channel. Ask a moderator to run /setreferralrecordschannel and make sure it points to a standard text channel.",
+    };
+  }
+
   await targetChannel.send(buildRecordMessage("referral", submission, userMention));
 
   if (targetChannel.id === currentChannelId) {
