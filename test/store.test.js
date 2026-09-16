@@ -124,6 +124,25 @@ test("store supports add, edit, list and remove custom commands", () => {
   assert.equal(getCustomCommand("guild-1", "hello"), null);
 });
 
+test("custom command lookups ignore inherited Object prototype properties", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "posting-bot-store-"));
+  const {
+    addCustomCommand,
+    editCustomCommand,
+    getCustomCommand,
+    removeCustomCommand,
+  } = loadStoreModule(tempDir);
+
+  assert.equal(getCustomCommand("guild-1", "constructor"), null);
+  assert.equal(editCustomCommand("guild-1", "toString", { response: "x" }), false);
+  assert.equal(removeCustomCommand("guild-1", "hasOwnProperty"), false);
+  assert.equal(addCustomCommand("guild-1", "constructor", "ctor", "ok"), true);
+  assert.deepEqual(getCustomCommand("guild-1", "constructor"), {
+    description: "ctor",
+    response: "ok",
+  });
+});
+
 test("legacy guild config without customCommands is normalized", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "posting-bot-store-"));
   const storePath = path.join(tempDir, "channels.json");

@@ -7,6 +7,7 @@ const dataDir = configuredDataDir
   : path.join(process.cwd(), "data");
 const storePath = path.join(dataDir, "channels.json");
 const validRecordTypes = new Set(["code", "referral"]);
+const hasOwn = Object.prototype.hasOwnProperty;
 
 function createDefaultStore() {
   return { guilds: {} };
@@ -149,7 +150,7 @@ function addCustomCommand(guildId, name, description, response) {
   };
   store.guilds[guildId].customCommands ??= {};
 
-  if (store.guilds[guildId].customCommands[name]) {
+  if (hasOwn.call(store.guilds[guildId].customCommands, name)) {
     return false;
   }
 
@@ -163,7 +164,10 @@ function addCustomCommand(guildId, name, description, response) {
 
 function editCustomCommand(guildId, name, updates) {
   const store = readStore();
-  const command = store.guilds[guildId]?.customCommands?.[name];
+  const customCommands = store.guilds[guildId]?.customCommands;
+  const command = hasOwn.call(customCommands ?? {}, name)
+    ? customCommands[name]
+    : null;
 
   if (!command) {
     return false;
@@ -182,7 +186,7 @@ function editCustomCommand(guildId, name, updates) {
 function removeCustomCommand(guildId, name) {
   const store = readStore();
 
-  if (!store.guilds[guildId]?.customCommands?.[name]) {
+  if (!hasOwn.call(store.guilds[guildId]?.customCommands ?? {}, name)) {
     return false;
   }
 
@@ -196,7 +200,8 @@ function listCustomCommands(guildId) {
 }
 
 function getCustomCommand(guildId, name) {
-  return getGuildConfig(guildId).customCommands[name] ?? null;
+  const customCommands = getGuildConfig(guildId).customCommands;
+  return hasOwn.call(customCommands, name) ? customCommands[name] : null;
 }
 
 module.exports = {

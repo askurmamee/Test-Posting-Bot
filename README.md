@@ -84,6 +84,7 @@ The bot should have permission to:
 - Send messages
 - Manage messages
 - View channels
+- Manage channels (required if using auto-create for records channels)
 
 Moderators need the **Manage Channels** permission to configure which channels are code-only.
 
