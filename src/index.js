@@ -340,6 +340,20 @@ function sanitizeCustomCommandName(name) {
   return name.trim().toLowerCase();
 }
 
+function isValidCustomCommandName(name) {
+  return customCommandNamePattern.test(name) && !baseCommandNames.has(name);
+}
+
+async function syncAllGuildSlashCommands() {
+  const syncTasks = Array.from(client.guilds.cache.values(), (guild) =>
+    syncGuildSlashCommands(guild).catch((error) => {
+      console.error(`Failed to sync slash commands for guild ${guild.id}:`, error);
+    }),
+  );
+
+  await Promise.all(syncTasks);
+}
+
 function buildGuildCommandPayload(guildId) {
   const baseCommands = buildBaseCommands();
   const customCommands = listCustomCommands(guildId);
@@ -569,13 +583,8 @@ async function handleSlashCommand(interaction) {
     const response = interaction.options.getString("response", true).trim();
     const name = sanitizeCustomCommandName(rawName);
 
-    if (!customCommandNamePattern.test(name)) {
+    if (!isValidCustomCommandName(name)) {
       await interaction.editReply("Command name must be 1-32 chars using lowercase letters, numbers, `_`, or `-`.");
-      return;
-    }
-
-    if (baseCommandNames.has(name)) {
-      await interaction.editReply("That command name is reserved by the bot.");
       return;
     }
 
@@ -614,6 +623,11 @@ async function handleSlashCommand(interaction) {
     const description = interaction.options.getString("description");
     const response = interaction.options.getString("response");
     const name = sanitizeCustomCommandName(rawName);
+
+    if (!isValidCustomCommandName(name)) {
+      await interaction.editReply("Command name must be a non-reserved custom command name (1-32 chars, lowercase letters, numbers, `_`, or `-`).");
+      return;
+    }
 
     if (!description && !response) {
       await interaction.editReply("Provide at least one field to update: description or response.");
@@ -661,6 +675,11 @@ async function handleSlashCommand(interaction) {
     const rawName = interaction.options.getString("name", true);
     const name = sanitizeCustomCommandName(rawName);
 
+    if (!isValidCustomCommandName(name)) {
+      await interaction.editReply("Command name must be a non-reserved custom command name (1-32 chars, lowercase letters, numbers, `_`, or `-`).");
+      return;
+    }
+
     const existingCommand = getCustomCommand(guild.id, name);
 
     if (!existingCommand) {
@@ -689,11 +708,30 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    await interaction.editReply(
-      entries
-        .map(([name, config]) => `- /${name} — ${config.description}`)
-        .join("\n"),
-    );
+    const lines = entries.map(([name, config]) => `- /${name} — ${config.description}`);
+    const messages = [];
+    let current = "";
+
+    for (const line of lines) {
+      const next = current ? `${current}\n${line}` : line;
+
+      if (next.length > 1900) {
+        messages.push(current);
+        current = line;
+      } else {
+        current = next;
+      }
+    }
+
+    if (current) {
+      messages.push(current);
+    }
+
+    await interaction.editReply(messages[0]);
+
+    for (const message of messages.slice(1)) {
+      await interaction.followUp({ content: message, ephemeral: true });
+    }
     return;
   }
 
@@ -761,14 +799,7 @@ async function moderateCodeOnlyChannel(message) {
 
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
-
-  for (const guild of client.guilds.cache.values()) {
-    try {
-      await syncGuildSlashCommands(guild);
-    } catch (error) {
-      console.error(`Failed to sync slash commands for guild ${guild.id}:`, error);
-    }
-  }
+  await syncAllGuildSlashCommands();
 });
 
 client.on("guildCreate", async (guild) => {

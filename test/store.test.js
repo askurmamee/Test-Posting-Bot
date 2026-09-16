@@ -123,3 +123,43 @@ test("store supports add, edit, list and remove custom commands", () => {
   assert.equal(removeCustomCommand("guild-1", "hello"), false);
   assert.equal(getCustomCommand("guild-1", "hello"), null);
 });
+
+test("legacy guild config without customCommands is normalized", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "posting-bot-store-"));
+  const storePath = path.join(tempDir, "channels.json");
+  fs.writeFileSync(
+    storePath,
+    JSON.stringify({
+      guilds: {
+        "guild-1": {
+          channels: { "channel-1": { type: "code" } },
+          codeRecordsChannelId: "records-1",
+          referralRecordsChannelId: null,
+        },
+      },
+    }),
+  );
+
+  const {
+    addCustomCommand,
+    getGuildConfig,
+    listCustomCommands,
+  } = loadStoreModule(tempDir);
+
+  assert.deepEqual(getGuildConfig("guild-1"), {
+    channels: {
+      "channel-1": { type: "code" },
+    },
+    codeRecordsChannelId: "records-1",
+    referralRecordsChannelId: null,
+    customCommands: {},
+  });
+  assert.deepEqual(listCustomCommands("guild-1"), {});
+  assert.equal(addCustomCommand("guild-1", "hello", "Say hello", "Hello"), true);
+  assert.deepEqual(listCustomCommands("guild-1"), {
+    hello: {
+      description: "Say hello",
+      response: "Hello",
+    },
+  });
+});
