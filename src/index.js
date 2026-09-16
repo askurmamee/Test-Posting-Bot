@@ -328,12 +328,10 @@ function buildBaseCommands() {
       .setDescription("List all custom commands"),
     new SlashCommandBuilder()
       .setName("restartbot")
-      .setDescription("Restart the bot process")
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+      .setDescription("Restart the bot process"),
     new SlashCommandBuilder()
       .setName("updatebot")
-      .setDescription("Run the configured update command")
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+      .setDescription("Run the configured update command"),
   ];
 }
 
@@ -356,7 +354,7 @@ async function syncAllGuildSlashCommands() {
       nextIndex += 1;
 
       try {
-        await syncGuildSlashCommands(guild);
+        await withGuildCustomCommandLock(guild.id, () => syncGuildSlashCommands(guild));
       } catch (error) {
         console.error(`Failed to sync slash commands for guild ${guild.id}:`, error);
       }
@@ -652,8 +650,10 @@ async function handleSlashCommand(interaction) {
     }
 
     const rawName = interaction.options.getString("name", true);
-    const description = interaction.options.getString("description");
-    const response = interaction.options.getString("response");
+    const rawDescription = interaction.options.getString("description");
+    const rawResponse = interaction.options.getString("response");
+    const description = rawDescription?.trim();
+    const response = rawResponse?.trim();
     const name = sanitizeCustomCommandName(rawName);
 
     if (!isValidCustomCommandName(name)) {
@@ -661,17 +661,17 @@ async function handleSlashCommand(interaction) {
       return;
     }
 
-    if (!description && !response) {
+    if (rawDescription === null && rawResponse === null) {
       await interaction.editReply("Provide at least one field to update: description or response.");
       return;
     }
 
-    if (description && description.trim().length > 100) {
+    if (rawDescription !== null && (!description || description.length > 100)) {
       await interaction.editReply("Description must be 1-100 characters.");
       return;
     }
 
-    if (response && response.trim().length > 2000) {
+    if (rawResponse !== null && (!response || response.length > 2000)) {
       await interaction.editReply("Response must be 1-2000 characters.");
       return;
     }
@@ -684,8 +684,8 @@ async function handleSlashCommand(interaction) {
       }
 
       if (!editCustomCommand(guild.id, name, {
-        description: description?.trim(),
-        response: response?.trim(),
+        description: rawDescription === null ? undefined : description,
+        response: rawResponse === null ? undefined : response,
       })) {
         return { status: "missing" };
       }
@@ -861,7 +861,7 @@ client.once("ready", async () => {
 
 client.on("guildCreate", async (guild) => {
   try {
-    await syncGuildSlashCommands(guild);
+    await withGuildCustomCommandLock(guild.id, () => syncGuildSlashCommands(guild));
   } catch (error) {
     console.error(`Failed to sync slash commands for new guild ${guild.id}:`, error);
   }
