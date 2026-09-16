@@ -15,6 +15,7 @@ const {
   parseCodeSubmission,
   parseReferralSubmission,
 } = require("./codeRules");
+const { splitLinesIntoMessages } = require("./discordText");
 const {
   addCustomCommand,
   clearRecordsChannel,
@@ -761,36 +762,7 @@ async function handleSlashCommand(interaction) {
     }
 
     const lines = entries.map(([name, config]) => `- /${name} — ${config.description}`);
-    const messages = [];
-    let current = "";
-    const maxLength = 1900;
-
-    for (const line of lines) {
-      if (line.length > maxLength) {
-        if (current) {
-          messages.push(current);
-          current = "";
-        }
-
-        for (let start = 0; start < line.length; start += maxLength) {
-          messages.push(line.slice(start, start + maxLength));
-        }
-        continue;
-      }
-
-      const next = current ? `${current}\n${line}` : line;
-
-      if (next.length > maxLength) {
-        messages.push(current);
-        current = line;
-      } else {
-        current = next;
-      }
-    }
-
-    if (current) {
-      messages.push(current);
-    }
+    const messages = splitLinesIntoMessages(lines);
 
     if (messages.length === 0) {
       await interaction.editReply("No custom commands configured yet.");
@@ -893,7 +865,12 @@ client.on("interactionCreate", async (interaction) => {
   await handleSlashCommand(interaction).catch(async (error) => {
     console.error("Command failed:", error);
 
-    if (interaction.deferred || interaction.replied) {
+    if (interaction.replied) {
+      await interaction.followUp({ content: "Something went wrong while running that command.", ephemeral: true }).catch(() => null);
+      return;
+    }
+
+    if (interaction.deferred) {
       await interaction.editReply("Something went wrong while running that command.").catch(() => null);
       return;
     }
