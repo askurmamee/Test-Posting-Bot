@@ -53,7 +53,7 @@ function buildRecordsChannelCreateOptions(guild, botUserId, kind) {
 }
 
 function formatLinkFieldValue(url, label) {
-  const wrapperLength = label.length + 5;
+  const wrapperLength = label.length + 4;
   const maxUrlLength = MAX_EMBED_FIELD_VALUE_LENGTH - wrapperLength;
   const truncatedUrl = truncateForDiscord(url, maxUrlLength);
 
