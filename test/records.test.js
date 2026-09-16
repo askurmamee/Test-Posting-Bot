@@ -129,6 +129,38 @@ test("ensureGuildRecordsChannel creates and binds a missing configured channel",
   assert.deepEqual(boundIds, ["code-2"]);
 });
 
+test("ensureGuildRecordsChannel does not auto-create when startup recovery is reuse-only", async () => {
+  const guild = {
+    channels: {
+      cache: new Map(),
+      create: async () => {
+        throw new Error("should not create a new channel");
+      },
+      fetch: async (channelId) => {
+        if (channelId) {
+          return null;
+        }
+
+        return {
+          find: () => null,
+        };
+      },
+    },
+    roles: { everyone: { id: "everyone" } },
+  };
+
+  const channel = await ensureGuildRecordsChannel(guild, "referral", {
+    allowCreate: false,
+    botUserId: "bot-user",
+    configuredChannelId: null,
+    setConfiguredChannelId: () => {
+      throw new Error("should not bind");
+    },
+  });
+
+  assert.equal(channel, null);
+});
+
 test("ensureGuildRecordsChannel rejects configured non-text channels", async () => {
   const guild = {
     channels: {

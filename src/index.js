@@ -401,15 +401,22 @@ async function syncGuildSlashCommands(guild) {
 
 async function reconcileGuildRecordsChannels(guild) {
   await withGuildMutationLock(guild.id, async () => {
+    const guildConfig = getGuildConfig(guild.id);
+    const shouldCreateMissingChannels = Boolean(
+      guildConfig.codeRecordsChannelId || guildConfig.referralRecordsChannelId,
+    );
+
     await ensureGuildRecordsChannel(guild, "code", {
+      allowCreate: shouldCreateMissingChannels,
       botUserId: client.user.id,
-      configuredChannelId: getGuildConfig(guild.id).codeRecordsChannelId,
+      configuredChannelId: guildConfig.codeRecordsChannelId,
       reason: "Startup reconciliation for code records channel",
       setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "code", channelId),
     });
     await ensureGuildRecordsChannel(guild, "referral", {
+      allowCreate: shouldCreateMissingChannels,
       botUserId: client.user.id,
-      configuredChannelId: getGuildConfig(guild.id).referralRecordsChannelId,
+      configuredChannelId: guildConfig.referralRecordsChannelId,
       reason: "Startup reconciliation for referral records channel",
       setConfiguredChannelId: (channelId) => setRecordsChannel(guild.id, "referral", channelId),
     });

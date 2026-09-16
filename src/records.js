@@ -53,7 +53,7 @@ function buildRecordsChannelCreateOptions(guild, botUserId, kind) {
 }
 
 function formatLinkFieldValue(url, label) {
-  const wrapperLength = label.length + 4;
+  const wrapperLength = label.length + 5;
   const maxUrlLength = MAX_EMBED_FIELD_VALUE_LENGTH - wrapperLength;
   const truncatedUrl = truncateForDiscord(url, maxUrlLength);
 
@@ -131,6 +131,7 @@ async function findGuildTextChannelByName(guild, name) {
 
 async function ensureGuildRecordsChannel(guild, kind, options = {}) {
   const {
+    allowCreate = true,
     botUserId,
     configuredChannelId,
     reason,
@@ -158,11 +159,20 @@ async function ensureGuildRecordsChannel(guild, kind, options = {}) {
   }
 
   const existingNamedChannel = await findGuildTextChannelByName(guild, getRecordsChannelName(kind));
-  const targetChannel = existingNamedChannel
-    ?? await guild.channels.create({
-      ...buildRecordsChannelCreateOptions(guild, botUserId, kind),
-      reason: reason ?? `Auto-created ${kind} records channel`,
-    });
+
+  if (existingNamedChannel) {
+    setConfiguredChannelId?.(existingNamedChannel.id);
+    return existingNamedChannel;
+  }
+
+  if (!allowCreate) {
+    return null;
+  }
+
+  const targetChannel = await guild.channels.create({
+    ...buildRecordsChannelCreateOptions(guild, botUserId, kind),
+    reason: reason ?? `Auto-created ${kind} records channel`,
+  });
 
   setConfiguredChannelId?.(targetChannel.id);
   return targetChannel;
