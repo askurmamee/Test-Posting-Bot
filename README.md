@@ -5,7 +5,7 @@ Discord bot for keeping code channels clean and sending code or referral submiss
 ## What it does
 
 - Lets moderators mark only the channels they need as code-only
-- Lets moderators choose one records-only channel for codes and one for referrals
+- Lets moderators choose one bot-posted records-only channel for codes and one for referrals
 - Deletes normal chat from protected channels
 - Lets members submit a code or referral from any channel with slash commands
 - Lets admins restart the bot or run a configured update command from Discord
@@ -33,7 +33,7 @@ Discord bot for keeping code channels clean and sending code or referral submiss
 
 If a protected channel is configured, members can also post a bare code directly as long as it is a single token made of letters, numbers, `_`, or `-`.
 
-All `/code` and `/referral` submissions can be run in any channel. The bot sends each one into the correct configured records channel.
+All `/code` and `/referral` submissions can be run in any channel. The bot sends each one into the correct configured records channel; missing records channels are recreated on submission, and startup only auto-creates them for servers that already had records-channel configuration (otherwise it only reuses existing `code-records` / `referral-records` channels by name).
 
 ## Setup
 
